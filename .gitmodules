@@ -1,0 +1,36 @@
+[submodule "external/ImGuiX"]
+	path = external/ImGuiX
+	url = https://github.com/LimiNode/ImGuiX.git
+[submodule "external/asio"]
+	path = external/asio
+	url = https://github.com/chriskohlhoff/asio.git
+[submodule "external/json"]
+	path = external/json
+	url = https://github.com/nlohmann/json.git
+[submodule "external/tdlib"]
+	path = external/tdlib
+	url = https://github.com/tdlib/td.git
+[submodule "external/imgui"]
+	path = external/imgui
+	url = https://github.com/ocornut/imgui.git
+[submodule "external/fmt"]
+	path = external/fmt
+	url = https://github.com/fmtlib/fmt.git
+[submodule "external/SFML"]
+	path = external/SFML
+	url = https://github.com/SFML/SFML.git
+[submodule "external/imgui-sfml"]
+	path = external/imgui-sfml
+	url = https://github.com/SFML/imgui-sfml.git
+[submodule "external/freetype"]
+	path = external/freetype
+	url = https://github.com/freetype/freetype.git
+[submodule "external/dlg"]
+	path = external/dlg
+	url = https://github.com/nyorain/dlg.git
+[submodule "external/Simple-Web-Server"]
+	path = external/Simple-Web-Server
+	url = https://gitlab.com/eidheim/Simple-Web-Server.git
+[submodule "external/hmac-cpp"]
+	path = external/hmac-cpp
+	url = https://github.com/LimiNode/hmac-cpp.git

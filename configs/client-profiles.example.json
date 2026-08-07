@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "clients": [
+    {
+      "id": "codex-development",
+      "display_name": "Codex development",
+      "enabled": true,
+      "allowed_accounts": ["work"],
+      "allowed_tools": ["telegram_list_chats", "telegram_get_messages", "telegram_prepare_send_message", "telegram_execute_approved_action"],
+      "allowed_chats": [-1001234567890],
+      "write_policy": "require_approval"
+    }
+  ]
+}

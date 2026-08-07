@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "accounts": [
+    {
+      "id": "work",
+      "display_name": "Work Telegram",
+      "database_directory": "data/tdlib/work/database",
+      "files_directory": "data/tdlib/work/files",
+      "api_id": 0,
+      "api_hash_dpapi": "",
+      "database_key_dpapi": ""
+    }
+  ]
+}

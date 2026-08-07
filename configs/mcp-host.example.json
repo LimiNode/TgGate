@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "enabled": false,
+  "bind_address": "127.0.0.1",
+  "port": 8765,
+  "max_request_body_bytes": 1048576,
+  "maximum_connections": 16,
+  "allowed_origins": [],
+  "client_credentials": []
+}

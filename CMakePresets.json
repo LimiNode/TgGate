@@ -1,0 +1,38 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "mingw-common",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "TGGATE_BUILD_TESTS": "ON",
+        "TGGATE_BUILD_UI_MODEL": "ON"
+      }
+    },
+    {
+      "name": "mingw-ninja",
+      "displayName": "MinGW + Ninja",
+      "inherits": "mingw-common",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/mingw-ninja"
+    },
+    {
+      "name": "mingw-makefiles",
+      "displayName": "MinGW Makefiles",
+      "inherits": "mingw-common",
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build/mingw-makefiles"
+    }
+  ],
+  "buildPresets": [
+    { "name": "mingw-ninja", "configurePreset": "mingw-ninja" },
+    { "name": "mingw-makefiles", "configurePreset": "mingw-makefiles" }
+  ],
+  "testPresets": [
+    { "name": "mingw-ninja", "configurePreset": "mingw-ninja", "output": { "outputOnFailure": true } },
+    { "name": "mingw-makefiles", "configurePreset": "mingw-makefiles", "output": { "outputOnFailure": true } }
+  ]
+}
