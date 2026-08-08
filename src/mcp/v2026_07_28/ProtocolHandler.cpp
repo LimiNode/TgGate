@@ -17,8 +17,7 @@ bool ProtocolHandler::requires_name(const std::string_view method) noexcept {
 }
 
 nlohmann::json ProtocolHandler::result(const nlohmann::json& id, nlohmann::json value) const {
-    return {{"jsonrpc", "2.0"}, {"id", id}, {"result", std::move(value)},
-        {"_meta", {{"io.modelcontextprotocol/serverInfo", {{"name", "TgGate"}, {"version", "0.1.0"}}}}}};
+    return {{"jsonrpc", "2.0"}, {"id", id}, {"result", std::move(value)}};
 }
 
 nlohmann::json ProtocolHandler::rpc_error(
@@ -34,7 +33,9 @@ nlohmann::json ProtocolHandler::handle(const nlohmann::json& request) {
     if (method == "server/discover") {
         return result(id, {{"resultType", "complete"}, {"supportedVersions", {kProtocolVersion}},
             {"capabilities", {{"tools", nlohmann::json::object()}}},
-            {"instructions", "TgGate exposes policy-controlled local Telegram tools."}});
+            {"_meta", {{"io.modelcontextprotocol/serverInfo", {{"name", "TgGate"}, {"version", "0.1.0"}}}}},
+            {"instructions", "TgGate exposes policy-controlled local Telegram tools."},
+            {"ttlMs", 3600000}, {"cacheScope", "public"}});
     }
     if (method == "tools/list") {
         auto tools = nlohmann::json::array();
@@ -43,7 +44,8 @@ nlohmann::json ProtocolHandler::handle(const nlohmann::json& request) {
                 tools.push_back(tool);
             }
         }
-        return result(id, {{"tools", std::move(tools)}});
+        return result(id, {{"resultType", "complete"}, {"tools", std::move(tools)},
+            {"ttlMs", 300000}, {"cacheScope", "private"}});
     }
     if (method == "tools/call") return handle_tool_call(request);
     return rpc_error(id, -32601, "Method not found");
@@ -81,7 +83,8 @@ nlohmann::json ProtocolHandler::handle_tool_call(const nlohmann::json& request) 
     }
 
     const auto serialized = response.dump();
-    return result(id, {{"content", {{{"type", "text"}, {"text", serialized}}}}, {"isError", !response.value("ok", false)}});
+    return result(id, {{"resultType", "complete"}, {"content", {{{"type", "text"}, {"text", serialized}}}},
+        {"isError", !response.value("ok", false)}});
 }
 
 } // namespace tggate::mcp::v2026_07_28

@@ -61,12 +61,24 @@ constexpr std::string_view kMcpPath = "/mcp";
     const int status,
     const nlohmann::json& id,
     const int code,
-    const std::string_view message) {
-    return response(status, {{"jsonrpc", "2.0"}, {"id", id}, {"error", {{"code", code}, {"message", message}}}});
+    const std::string_view message,
+    nlohmann::json data = nullptr) {
+    nlohmann::json error{{"code", code}, {"message", message}};
+    if (!data.is_null()) error["data"] = std::move(data);
+    return response(status, {{"jsonrpc", "2.0"}, {"id", id}, {"error", std::move(error)}});
 }
 
 [[nodiscard]] bool valid_request_id(const nlohmann::json& value) {
     return value.is_null() || value.is_string() || value.is_number();
+}
+
+[[nodiscard]] bool has_required_client_metadata(const nlohmann::json& metadata) {
+    const auto client_info = metadata.find("io.modelcontextprotocol/clientInfo");
+    const auto capabilities = metadata.find("io.modelcontextprotocol/clientCapabilities");
+    return client_info != metadata.end() && client_info->is_object() &&
+        client_info->contains("name") && client_info->at("name").is_string() && !client_info->at("name").get_ref<const std::string&>().empty() &&
+        client_info->contains("version") && client_info->at("version").is_string() && !client_info->at("version").get_ref<const std::string&>().empty() &&
+        capabilities != metadata.end() && capabilities->is_object();
 }
 
 } // namespace
@@ -201,13 +213,20 @@ application::http::HttpResponse LocalMcpHttpService::handle(const application::h
         }
         const auto method = request_json.at("method").get<std::string>();
         const auto protocol_version = header(request, "MCP-Protocol-Version");
+        if (protocol_version.empty()) {
+            return rpc_error(400, id, -32020, "MCP-Protocol-Version is required");
+        }
         if (protocol_version != v2026_07_28::kProtocolVersion) {
-            return rpc_error(400, id, -32022, "Unsupported or missing MCP protocol version");
+            return rpc_error(400, id, -32022, "Unsupported protocol version",
+                {{"supported", {v2026_07_28::kProtocolVersion}}, {"requested", protocol_version}});
         }
         if (!request_json.contains("params") || !request_json.at("params").is_object() ||
             !request_json.at("params").contains("_meta") || !request_json.at("params").at("_meta").is_object() ||
             request_json.at("params").at("_meta").value("io.modelcontextprotocol/protocolVersion", "") != protocol_version) {
             return rpc_error(400, id, -32020, "MCP protocol metadata does not match the request");
+        }
+        if (!has_required_client_metadata(request_json.at("params").at("_meta"))) {
+            return rpc_error(400, id, -32602, "MCP request metadata requires clientInfo and clientCapabilities");
         }
         if (header(request, "Mcp-Method") != method) {
             return rpc_error(400, id, -32020, "Mcp-Method does not match the JSON-RPC method");

@@ -38,6 +38,8 @@ constexpr auto kProtocolVersion = "2026-07-28";
 
 [[nodiscard]] nlohmann::json request(const std::string_view method, nlohmann::json params = nlohmann::json::object()) {
     params["_meta"]["io.modelcontextprotocol/protocolVersion"] = kProtocolVersion;
+    params["_meta"]["io.modelcontextprotocol/clientInfo"] = {{"name", "TgGate integration test"}, {"version", "1.0"}};
+    params["_meta"]["io.modelcontextprotocol/clientCapabilities"] = nlohmann::json::object();
     return {{"jsonrpc", "2.0"}, {"id", 7}, {"method", method}, {"params", std::move(params)}};
 }
 
@@ -111,6 +113,9 @@ int main() {
     assert(native_response && native_response->status_code == "200 OK");
     const auto native_body = nlohmann::json::parse(native_response->content.string());
     assert(native_body.at("result").at("supportedVersions").at(0) == kProtocolVersion);
+    assert(native_body.at("result").at("_meta").at("io.modelcontextprotocol/serverInfo").at("name") == "TgGate");
+    assert(native_body.at("result").at("ttlMs") == 3600000);
+    assert(native_body.at("result").at("cacheScope") == "public");
 
     const auto origin_response = client.request("POST", "/mcp", discover, headers(authorization, "server/discover", "https://allowed.example"));
     assert(origin_response && origin_response->status_code == "200 OK");
@@ -128,7 +133,11 @@ int main() {
         {{"Authorization", authorization}, {"Content-Type", "application/json"}, {"MCP-Protocol-Version", kProtocolVersion},
          {"Mcp-Method", "tools/list"}, {"X-TgGate-Client", "writer-client"}});
     assert(list_response && list_response->status_code == "200 OK");
-    const auto listed = nlohmann::json::parse(list_response->content.string()).at("result").at("tools");
+    const auto list_body = nlohmann::json::parse(list_response->content.string());
+    assert(list_body.at("result").at("resultType") == "complete");
+    assert(list_body.at("result").at("ttlMs") == 300000);
+    assert(list_body.at("result").at("cacheScope") == "private");
+    const auto& listed = list_body.at("result").at("tools");
     assert(listed.size() == 1 && listed.at(0).at("name") == "telegram_list_chats");
 
     const auto unauthorized = client.request("POST", "/mcp", discover, headers("Bearer wrong", "server/discover"));
@@ -139,11 +148,18 @@ int main() {
     auto missing_protocol_headers = headers(authorization, "server/discover");
     missing_protocol_headers.erase("MCP-Protocol-Version");
     const auto missing_protocol = client.request("POST", "/mcp", discover, missing_protocol_headers);
-    assert(missing_protocol && missing_protocol->status_code == "400 Bad Request" && rpc_error_code(missing_protocol) == -32022);
+    assert(missing_protocol && missing_protocol->status_code == "400 Bad Request" && rpc_error_code(missing_protocol) == -32020);
     auto unsupported_protocol_headers = headers(authorization, "server/discover");
     unsupported_protocol_headers.find("MCP-Protocol-Version")->second = "2025-11-25";
     const auto unsupported_protocol = client.request("POST", "/mcp", discover, unsupported_protocol_headers);
     assert(unsupported_protocol && unsupported_protocol->status_code == "400 Bad Request" && rpc_error_code(unsupported_protocol) == -32022);
+    const auto unsupported_body = nlohmann::json::parse(unsupported_protocol->content.string());
+    assert(unsupported_body.at("error").at("data").at("supported").at(0) == kProtocolVersion);
+
+    auto missing_client_capabilities = request("server/discover");
+    missing_client_capabilities.at("params").at("_meta").erase("io.modelcontextprotocol/clientCapabilities");
+    const auto invalid_client_metadata = client.request("POST", "/mcp", missing_client_capabilities.dump(), headers(authorization, "server/discover"));
+    assert(invalid_client_metadata && invalid_client_metadata->status_code == "400 Bad Request" && rpc_error_code(invalid_client_metadata) == -32602);
 
     const auto mismatched_method = client.request("POST", "/mcp", discover, headers(authorization, "tools/list"));
     assert(mismatched_method && mismatched_method->status_code == "400 Bad Request" && rpc_error_code(mismatched_method) == -32020);
@@ -161,6 +177,13 @@ int main() {
         request("tools/call", {{"name", "telegram_prepare_send_message"}, {"arguments", {{"account_id", "work"}, {"chat_id", 42}, {"text", "blocked"}}}}).dump(),
         write_headers);
     assert(reader_write && reader_write->status_code == "200 OK" && rpc_error_code(reader_write) == -32602);
+
+    auto call_headers = headers(authorization, "tools/call");
+    call_headers.emplace("Mcp-Name", "telegram_list_chats");
+    const auto tool_call = client.request("POST", "/mcp", request("tools/call",
+        {{"name", "telegram_list_chats"}, {"arguments", {{"account_id", "work"}}}}).dump(), call_headers);
+    assert(tool_call && tool_call->status_code == "200 OK");
+    assert(nlohmann::json::parse(tool_call->content.string()).at("result").at("resultType") == "complete");
 
     const auto batch = client.request("POST", "/mcp", "[]", headers(authorization, "server/discover"));
     assert(batch && batch->status_code == "400 Bad Request" && rpc_error_code(batch) == -32600);
