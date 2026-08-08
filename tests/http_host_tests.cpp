@@ -47,6 +47,7 @@ constexpr auto kProtocolVersion = "2026-07-28";
     const std::string& authorization, const std::string_view method, const std::string_view origin = {}) {
     SimpleWeb::CaseInsensitiveMultimap result{
         {"Authorization", authorization}, {"Content-Type", "application/json"},
+        {"Accept", "application/json, text/event-stream"},
         {"MCP-Protocol-Version", kProtocolVersion}, {"Mcp-Method", std::string(method)},
     };
     if (!origin.empty()) result.emplace("Origin", std::string(origin));
@@ -130,7 +131,7 @@ int main() {
     assert(forbidden_preflight && forbidden_preflight->status_code == "403 Forbidden");
 
     const auto list_response = client.request("POST", "/mcp", request("tools/list").dump(),
-        {{"Authorization", authorization}, {"Content-Type", "application/json"}, {"MCP-Protocol-Version", kProtocolVersion},
+        {{"Authorization", authorization}, {"Content-Type", "application/json"}, {"Accept", "application/json, text/event-stream"}, {"MCP-Protocol-Version", kProtocolVersion},
          {"Mcp-Method", "tools/list"}, {"X-TgGate-Client", "writer-client"}});
     assert(list_response && list_response->status_code == "200 OK");
     const auto list_body = nlohmann::json::parse(list_response->content.string());
@@ -142,6 +143,14 @@ int main() {
 
     const auto unauthorized = client.request("POST", "/mcp", discover, headers("Bearer wrong", "server/discover"));
     assert(unauthorized && unauthorized->status_code == "401 Unauthorized");
+    auto wrong_content_type = headers(authorization, "server/discover");
+    wrong_content_type.find("Content-Type")->second = "text/plain";
+    const auto unsupported_content = client.request("POST", "/mcp", discover, wrong_content_type);
+    assert(unsupported_content && unsupported_content->status_code == "415 Unsupported Media Type");
+    auto incomplete_accept = headers(authorization, "server/discover");
+    incomplete_accept.find("Accept")->second = "application/json";
+    const auto unsupported_accept = client.request("POST", "/mcp", discover, incomplete_accept);
+    assert(unsupported_accept && unsupported_accept->status_code == "406 Not Acceptable");
     const auto forbidden_origin = client.request("POST", "/mcp", discover, headers(authorization, "server/discover", "https://denied.example"));
     assert(forbidden_origin && forbidden_origin->status_code == "403 Forbidden");
 

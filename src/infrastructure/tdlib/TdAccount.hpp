@@ -19,7 +19,8 @@ struct TdAccountOptions final {
     std::filesystem::path database_directory;
     std::filesystem::path files_directory;
     std::int32_t api_id = 0;
-    std::string api_hash;
+    application::security::SecretBuffer api_hash;
+    application::security::SecretBuffer database_encryption_key;
     std::string phone_number;
 };
 
@@ -61,3 +62,4 @@ private:
 };
 
 } // namespace tggate::infrastructure::tdlib
+#include "application/security/SecretBuffer.hpp"

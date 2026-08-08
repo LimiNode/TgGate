@@ -48,6 +48,18 @@ void write_response(const std::shared_ptr<Server::Response>& response, const app
     response->write(status_code(value.status), value.body, headers);
 }
 
+class ActiveRequestGuard final {
+public:
+    explicit ActiveRequestGuard(std::atomic_size_t& count) noexcept : count_(count) {}
+    ~ActiveRequestGuard() { count_.fetch_sub(1, std::memory_order_acq_rel); }
+
+    ActiveRequestGuard(const ActiveRequestGuard&) = delete;
+    ActiveRequestGuard& operator=(const ActiveRequestGuard&) = delete;
+
+private:
+    std::atomic_size_t& count_;
+};
+
 } // namespace
 
 class SimpleWebHttpHost::Impl final {
@@ -87,7 +99,7 @@ bool SimpleWebHttpHost::start(
         impl_->server = std::make_unique<Server>();
         impl_->server->config.address = config.bind_address;
         impl_->server->config.port = config.port;
-        impl_->server->config.thread_pool_size = 1;
+        impl_->server->config.thread_pool_size = config.maximum_connections;
         impl_->server->config.timeout_request = 5;
         impl_->server->config.timeout_content = 15;
         impl_->server->config.max_request_streambuf_size = config.max_request_body_bytes;
@@ -105,12 +117,12 @@ bool SimpleWebHttpHost::start(
                 write_response(response, {.status = 429});
                 return;
             }
+            const ActiveRequestGuard release_request(impl_->active_requests);
             try {
                 write_response(response, (*request_handler)(copy_request(*request)));
             } catch (...) {
                 write_response(response, {.status = 500});
             }
-            impl_->active_requests.fetch_sub(1, std::memory_order_acq_rel);
         };
         impl_->server->default_resource["POST"] = dispatch;
         impl_->server->default_resource["OPTIONS"] = dispatch;

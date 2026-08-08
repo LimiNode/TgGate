@@ -81,6 +81,31 @@ constexpr std::string_view kMcpPath = "/mcp";
         capabilities != metadata.end() && capabilities->is_object();
 }
 
+[[nodiscard]] std::string_view trim_ascii_whitespace(std::string_view value) noexcept {
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())) != 0) value.remove_prefix(1);
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())) != 0) value.remove_suffix(1);
+    return value;
+}
+
+[[nodiscard]] bool content_type_is_json(const std::string_view content_type) noexcept {
+    const auto separator = content_type.find(';');
+    return ascii_equal_ignore_case(trim_ascii_whitespace(content_type.substr(0, separator)), "application/json");
+}
+
+[[nodiscard]] bool accepts_media_type(const std::string_view accept, const std::string_view expected) noexcept {
+    std::size_t offset = 0;
+    while (offset <= accept.size()) {
+        const auto delimiter = accept.find(',', offset);
+        auto item = trim_ascii_whitespace(accept.substr(offset, delimiter == std::string_view::npos ? delimiter : delimiter - offset));
+        const auto parameters = item.find(';');
+        item = trim_ascii_whitespace(item.substr(0, parameters));
+        if (ascii_equal_ignore_case(item, expected)) return true;
+        if (delimiter == std::string_view::npos) break;
+        offset = delimiter + 1;
+    }
+    return false;
+}
+
 } // namespace
 
 LocalMcpHttpService::LocalMcpHttpService(
@@ -203,6 +228,9 @@ application::http::HttpResponse LocalMcpHttpService::handle(const application::h
         return value.profile.enabled && matches_bearer_token(authorization, value.bearer_token);
     });
     if (client == clients_.end()) return response(401);
+    if (!content_type_is_json(header(request, "Content-Type"))) return response(415);
+    const auto accept = header(request, "Accept");
+    if (!accepts_media_type(accept, "application/json") || !accepts_media_type(accept, "text/event-stream")) return response(406);
 
     try {
         const auto request_json = nlohmann::json::parse(request.body);

@@ -75,14 +75,22 @@ void DesktopController::draw_accounts() {
             state_.start_authorization(account.id, phone_number_, api_hash_);
             std::fill(std::begin(api_hash_), std::end(api_hash_), '\0');
         }
-        ImGui::InputText("Authentication code", authentication_code_, sizeof(authentication_code_));
-        ImGui::SameLine();
-        if (ImGui::Button("Submit code")) state_.submit_authentication_code(authentication_code_);
-        ImGui::InputText("2FA password", authentication_password_, sizeof(authentication_password_), ImGuiInputTextFlags_Password);
-        ImGui::SameLine();
-        if (ImGui::Button("Submit 2FA")) {
-            state_.submit_authentication_password(authentication_password_);
-            std::fill(std::begin(authentication_password_), std::end(authentication_password_), '\0');
+        if (account.authorization_status == "Waiting for authentication code") {
+            ImGui::InputText("Authentication code", authentication_code_, sizeof(authentication_code_));
+            ImGui::SameLine();
+            if (ImGui::Button("Submit code")) {
+                state_.submit_authentication_code(authentication_code_);
+                std::fill(std::begin(authentication_code_), std::end(authentication_code_), '\0');
+            }
+        } else if (account.authorization_status == "Waiting for 2FA password") {
+            ImGui::InputText("2FA password", authentication_password_, sizeof(authentication_password_), ImGuiInputTextFlags_Password);
+            ImGui::SameLine();
+            if (ImGui::Button("Submit 2FA")) {
+                state_.submit_authentication_password(authentication_password_);
+                std::fill(std::begin(authentication_password_), std::end(authentication_password_), '\0');
+            }
+        } else if (account.authorization_status == "Registration is required") {
+            ImGui::TextUnformatted("Telegram requires registration. Complete it in an official Telegram client, then restart authorization.");
         }
         ImGui::Separator();
         ImGui::PopID();

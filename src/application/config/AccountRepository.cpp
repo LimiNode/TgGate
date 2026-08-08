@@ -192,7 +192,7 @@ std::optional<std::string> AccountRepository::protect_api_hash(
     return hex_encode(*protected_bytes);
 }
 
-std::optional<std::string> AccountRepository::unprotect_api_hash(
+std::optional<security::SecretBuffer> AccountRepository::unprotect_api_hash(
     const std::string_view account_id,
     const std::string_view api_hash_dpapi) {
     if (account_id.empty()) return std::nullopt;
@@ -200,7 +200,7 @@ std::optional<std::string> AccountRepository::unprotect_api_hash(
     if (!protected_bytes) return std::nullopt;
     const auto plain_bytes = infrastructure::dpapi::DpapiProtector::unprotect(*protected_bytes, dpapi_purpose(account_id));
     if (!plain_bytes) return std::nullopt;
-    return std::string(plain_bytes->begin(), plain_bytes->end());
+    return security::SecretBuffer(std::move(*plain_bytes));
 }
 
 bool AccountRepository::ensure_database_key(AccountConfiguration& account, std::string& error) {

@@ -26,6 +26,23 @@ std::string state_name(const td::td_api::AuthorizationState& state) {
     }
 }
 
+void wipe_string(std::string& value) noexcept {
+    volatile char* current = value.empty() ? nullptr : value.data();
+    for (std::size_t index = 0; current && index < value.size(); ++index) current[index] = '\0';
+    value.clear();
+}
+
+class WipeStringOnExit final {
+public:
+    explicit WipeStringOnExit(std::string& value) noexcept : value_(value) {}
+    ~WipeStringOnExit() { wipe_string(value_); }
+    WipeStringOnExit(const WipeStringOnExit&) = delete;
+    WipeStringOnExit& operator=(const WipeStringOnExit&) = delete;
+
+private:
+    std::string& value_;
+};
+
 } // namespace
 
 TdAccount::TdAccount() = default;
@@ -35,8 +52,8 @@ TdAccount::~TdAccount() {
 }
 
 bool TdAccount::begin_authorization(TdAccountOptions options) {
-    if (options.account_id.empty() || options.api_id <= 0 || options.api_hash.empty() || options.phone_number.empty()) {
-        set_error("Account id, api_id, api_hash, and phone number are required");
+    if (options.account_id.empty() || options.api_id <= 0 || options.api_hash.empty() || options.database_encryption_key.empty() || options.phone_number.empty()) {
+        set_error("Account id, api_id, api_hash, database key, and phone number are required");
         return false;
     }
     stop();
@@ -89,6 +106,7 @@ void TdAccount::stop() {
     std::scoped_lock lock(mutex_);
     manager_.reset();
     client_id_ = 0;
+    options_ = {};
     authorization_status_ = "Stopped";
 }
 
@@ -137,9 +155,17 @@ void TdAccount::process_response() {
 void TdAccount::send_tdlib_parameters() {
     std::scoped_lock lock(mutex_);
     if (!manager_) return;
-    manager_->send(client_id_, next_request_id_++, make_object<td::td_api::setTdlibParameters>(
-        false, options_.database_directory.string(), options_.files_directory.string(), "",
-        true, true, true, false, options_.api_id, options_.api_hash, "en", "TgGate", "Windows", "0.1.0"));
+    std::string database_key(options_.database_encryption_key.view());
+    std::string api_hash(options_.api_hash.view());
+    const WipeStringOnExit wipe_database_key(database_key);
+    const WipeStringOnExit wipe_api_hash(api_hash);
+    auto parameters = make_object<td::td_api::setTdlibParameters>(
+        false, options_.database_directory.string(), options_.files_directory.string(), database_key,
+        true, true, true, false, options_.api_id, api_hash, "en", "TgGate", "Windows", "0.1.0");
+    // TDLib owns its request copy after send(). Wipe the temporary strings as
+    // soon as that hand-off is complete; TgGate keeps its canonical copies in
+    // SecretBuffer for the account lifecycle.
+    manager_->send(client_id_, next_request_id_++, std::move(parameters));
 }
 
 void TdAccount::send_phone_number() {
