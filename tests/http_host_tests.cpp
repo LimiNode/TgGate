@@ -10,9 +10,11 @@
 
 #include <client_http.hpp>
 
+#include <atomic>
 #include <cassert>
 #include <filesystem>
 #include <iostream>
+#include <stdexcept>
 
 #include <nlohmann/json.hpp>
 
@@ -151,6 +153,14 @@ int main() {
     incomplete_accept.find("Accept")->second = "application/json";
     const auto unsupported_accept = client.request("POST", "/mcp", discover, incomplete_accept);
     assert(unsupported_accept && unsupported_accept->status_code == "406 Not Acceptable");
+    auto json_refused = headers(authorization, "server/discover");
+    json_refused.find("Accept")->second = "application/json;q=0, text/event-stream";
+    const auto json_q_zero = client.request("POST", "/mcp", discover, json_refused);
+    assert(json_q_zero && json_q_zero->status_code == "406 Not Acceptable");
+    auto sse_refused = headers(authorization, "server/discover");
+    sse_refused.find("Accept")->second = "application/json, text/event-stream;q=0";
+    const auto sse_q_zero = client.request("POST", "/mcp", discover, sse_refused);
+    assert(sse_q_zero && sse_q_zero->status_code == "406 Not Acceptable");
     const auto forbidden_origin = client.request("POST", "/mcp", discover, headers(authorization, "server/discover", "https://denied.example"));
     assert(forbidden_origin && forbidden_origin->status_code == "403 Forbidden");
 
@@ -221,6 +231,18 @@ int main() {
     assert(rotated_response && rotated_response->status_code == "200 OK");
 
     mcp_host.stop();
+    std::atomic_bool throw_once = true;
+    assert(host.start({.enabled = true, .bind_address = "127.0.0.1", .port = 18767, .max_request_body_bytes = 128, .maximum_connections = 1},
+        [&throw_once](const application::http::HttpRequest&) -> application::http::HttpResponse {
+            if (throw_once.exchange(false)) throw std::runtime_error("expected test failure");
+            return {.status = 200};
+        }, error));
+    SimpleWeb::Client<SimpleWeb::HTTP> accounting_client("127.0.0.1:18767");
+    const auto failed_handler = accounting_client.request("POST", "/test", "");
+    assert(failed_handler && failed_handler->status_code == "500 Internal Server Error");
+    const auto recovered_handler = accounting_client.request("POST", "/test", "");
+    assert(recovered_handler && recovered_handler->status_code == "200 OK");
+    host.stop();
     std::filesystem::remove_all(root, filesystem_error);
     std::cout << "TgGate loopback MCP HTTP integration tests passed\n";
 }

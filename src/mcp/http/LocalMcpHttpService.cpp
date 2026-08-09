@@ -92,14 +92,39 @@ constexpr std::string_view kMcpPath = "/mcp";
     return ascii_equal_ignore_case(trim_ascii_whitespace(content_type.substr(0, separator)), "application/json");
 }
 
+[[nodiscard]] bool has_positive_quality(std::string_view parameters) noexcept {
+    while (!parameters.empty()) {
+        const auto delimiter = parameters.find(';');
+        const auto parameter = trim_ascii_whitespace(parameters.substr(0, delimiter));
+        const auto separator = parameter.find('=');
+        if (separator != std::string_view::npos && ascii_equal_ignore_case(trim_ascii_whitespace(parameter.substr(0, separator)), "q")) {
+            const auto quality = trim_ascii_whitespace(parameter.substr(separator + 1));
+            if (quality.empty()) return false;
+            const auto decimal = quality.find('.');
+            const auto integral = quality.substr(0, decimal);
+            const auto fractional = decimal == std::string_view::npos ? std::string_view{} : quality.substr(decimal + 1);
+            if ((integral != "0" && integral != "1") || (decimal != std::string_view::npos && fractional.empty())) return false;
+            for (const auto character : fractional) {
+                if (character < '0' || character > '9') return false;
+            }
+            if (integral == "1") return std::all_of(fractional.begin(), fractional.end(), [](const char value) { return value == '0'; });
+            return std::any_of(fractional.begin(), fractional.end(), [](const char value) { return value != '0'; });
+        }
+        if (delimiter == std::string_view::npos) break;
+        parameters.remove_prefix(delimiter + 1);
+    }
+    return true;
+}
+
 [[nodiscard]] bool accepts_media_type(const std::string_view accept, const std::string_view expected) noexcept {
     std::size_t offset = 0;
     while (offset <= accept.size()) {
         const auto delimiter = accept.find(',', offset);
         auto item = trim_ascii_whitespace(accept.substr(offset, delimiter == std::string_view::npos ? delimiter : delimiter - offset));
         const auto parameters = item.find(';');
-        item = trim_ascii_whitespace(item.substr(0, parameters));
-        if (ascii_equal_ignore_case(item, expected)) return true;
+        const auto media_type = trim_ascii_whitespace(item.substr(0, parameters));
+        if (ascii_equal_ignore_case(media_type, expected) &&
+            (parameters == std::string_view::npos || has_positive_quality(item.substr(parameters + 1)))) return true;
         if (delimiter == std::string_view::npos) break;
         offset = delimiter + 1;
     }

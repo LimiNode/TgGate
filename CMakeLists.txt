@@ -233,6 +233,11 @@ if(TGGATE_BUILD_TESTS)
     add_executable(tggate_policy_tests tests/policy_tests.cpp)
     target_link_libraries(tggate_policy_tests PRIVATE tggate_mcp tggate_configuration)
     add_test(NAME tggate_policy_tests COMMAND tggate_policy_tests)
+    # This self-containment gate catches adapter-header regressions even on
+    # machines that intentionally do not have an installed TDLib package.
+    add_executable(tggate_tdlib_header_tests tests/tdlib_header_tests.cpp)
+    target_include_directories(tggate_tdlib_header_tests PRIVATE src)
+    add_test(NAME tggate_tdlib_header_tests COMMAND tggate_tdlib_header_tests)
     if(TGGATE_ENABLE_HTTP_HOST)
         add_executable(tggate_http_host_tests tests/http_host_tests.cpp)
         target_link_libraries(tggate_http_host_tests PRIVATE tggate_http_host tggate_mcp_http)

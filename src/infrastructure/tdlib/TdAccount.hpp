@@ -1,5 +1,7 @@
 #pragma once
 
+#include "application/security/SecretBuffer.hpp"
+
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
@@ -62,4 +64,3 @@ private:
 };
 
 } // namespace tggate::infrastructure::tdlib
-#include "application/security/SecretBuffer.hpp"
