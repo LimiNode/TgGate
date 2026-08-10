@@ -49,6 +49,7 @@ private:
     void process_response();
     void send_tdlib_parameters();
     void send_phone_number();
+    void clear_sensitive_options();
     void set_status(std::string value);
     void set_error(std::string value);
 

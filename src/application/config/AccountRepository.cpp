@@ -26,6 +26,28 @@ std::string database_key_dpapi_purpose(const std::string_view account_id) {
     return "tggate/account/" + std::string(account_id) + "/database_key";
 }
 
+void wipe_bytes(std::vector<unsigned char>& value) noexcept {
+    if (value.empty()) return;
+#ifdef _WIN32
+    SecureZeroMemory(value.data(), value.size());
+#else
+    volatile unsigned char* current = value.data();
+    for (std::size_t index = 0; index < value.size(); ++index) current[index] = 0;
+#endif
+    value.clear();
+}
+
+class WipeBytesOnExit final {
+public:
+    explicit WipeBytesOnExit(std::vector<unsigned char>& value) noexcept : value_(value) {}
+    ~WipeBytesOnExit() noexcept { wipe_bytes(value_); }
+    WipeBytesOnExit(const WipeBytesOnExit&) = delete;
+    WipeBytesOnExit& operator=(const WipeBytesOnExit&) = delete;
+
+private:
+    std::vector<unsigned char>& value_;
+};
+
 std::string hex_encode(const std::vector<unsigned char>& bytes) {
     std::ostringstream stream;
     stream << std::hex << std::setfill('0');
@@ -186,7 +208,8 @@ std::optional<std::string> AccountRepository::protect_api_hash(
     const std::string_view account_id,
     const std::string_view api_hash) {
     if (account_id.empty() || api_hash.empty()) return std::nullopt;
-    const std::vector<unsigned char> input(api_hash.begin(), api_hash.end());
+    std::vector<unsigned char> input(api_hash.begin(), api_hash.end());
+    const WipeBytesOnExit wipe_input(input);
     const auto protected_bytes = infrastructure::dpapi::DpapiProtector::protect(input, dpapi_purpose(account_id));
     if (!protected_bytes) return std::nullopt;
     return hex_encode(*protected_bytes);
@@ -219,11 +242,12 @@ bool AccountRepository::ensure_database_key(AccountConfiguration& account, std::
         error = "TDLib database directory already exists but its protected database key is absent";
         return false;
     }
-    const auto key = infrastructure::crypto::SecureRandom::bytes(32);
+    auto key = infrastructure::crypto::SecureRandom::bytes(32);
     if (!key) {
         error = "Windows CSPRNG failed while creating the TDLib database key";
         return false;
     }
+    const WipeBytesOnExit wipe_key(*key);
     const auto protected_key = infrastructure::dpapi::DpapiProtector::protect(*key, database_key_dpapi_purpose(account.id));
     if (!protected_key) {
         error = "Windows DPAPI failed while protecting the TDLib database key";

@@ -103,11 +103,17 @@ bool TdAccount::submit_password(std::string password) {
 void TdAccount::stop() {
     running_ = false;
     if (receive_thread_.joinable()) receive_thread_.join();
-    std::scoped_lock lock(mutex_);
-    manager_.reset();
-    client_id_ = 0;
-    options_ = {};
-    authorization_status_ = "Stopped";
+    {
+        std::scoped_lock lock(mutex_);
+        manager_.reset();
+        client_id_ = 0;
+        authorization_status_ = "Stopped";
+    }
+    clear_sensitive_options();
+    {
+        std::scoped_lock lock(mutex_);
+        options_ = {};
+    }
 }
 
 std::string TdAccount::authorization_status() const {
@@ -141,7 +147,13 @@ void TdAccount::receive_loop() {
         switch (update.authorization_state_->get_id()) {
         case td::td_api::authorizationStateWaitTdlibParameters::ID: send_tdlib_parameters(); break;
         case td::td_api::authorizationStateWaitPhoneNumber::ID: send_phone_number(); break;
-        case td::td_api::authorizationStateClosed::ID: running_ = false; break;
+        case td::td_api::authorizationStateClosed::ID:
+            // This runs on the receive thread, so stop() would attempt to
+            // join the current thread. Clear the long-lived sensitive state
+            // directly and leave manager ownership for the later stop().
+            clear_sensitive_options();
+            running_ = false;
+            break;
         default: break;
         }
     }
@@ -173,6 +185,13 @@ void TdAccount::send_phone_number() {
     if (!manager_) return;
     manager_->send(client_id_, next_request_id_++,
         make_object<td::td_api::setAuthenticationPhoneNumber>(options_.phone_number, nullptr));
+}
+
+void TdAccount::clear_sensitive_options() {
+    std::scoped_lock lock(mutex_);
+    options_.api_hash.clear();
+    options_.database_encryption_key.clear();
+    wipe_string(options_.phone_number);
 }
 
 void TdAccount::set_status(std::string value) {
