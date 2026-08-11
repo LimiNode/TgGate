@@ -14,6 +14,9 @@ and make every consumer point to it.
 | `external/freetype`, `external/dlg` | Direct font stack modules retained in the top-level graph |
 | `external/Simple-Web-Server` | Local HTTP/JSON-RPC transport foundation |
 | `external/asio` | Standalone Asio for the transport |
+| `external/openssl` | Reviewed Win64 OpenSSL 3.4.0 package used when building TDLib |
+| `external/zlib` | zlib 1.3.2, built statically for TDLib |
+| `external/gperf` | GNU gperf 3.1 source, built as a local TDLib build tool |
 | `external/tdlib` | Telegram client implementation, built separately upstream |
 
 Current versions are pinned by the gitlinks in the parent repository. Update a
@@ -24,8 +27,12 @@ Further GUI features add their direct ImGuiX dependencies to this same directory
 (not `external/ImGuiX/libs`). This preserves the linear graph and follows the
 bootstrap convention in `mgc-platform`.
 
-TDLib itself requires OpenSSL, zlib and the build-time `gperf` executable. The
-current MinGW installation does not provide them, so TDLib is intentionally not
-enabled by default. Before enabling it, we will vendor a reviewed Windows build
-of these prerequisites under `external/` (or a reviewed TDLib SDK bundle that
-contains them) and point `TGGATE_TDLIB_PREFIX` at the resulting installation.
+TDLib itself requires OpenSSL, zlib and the build-time `gperf` executable.
+`external/openssl` provides the reviewed Win64 OpenSSL 3.4.0 package. Its
+`lib/VC/x64/MD` import libraries are compatible with the project MinGW toolchain;
+the matching DLLs live in `external/openssl/bin` and must be available when a
+TDLib-enabled executable runs. `external/zlib` and `external/gperf` complete
+the remaining prerequisites. Run `tools/build-tdlib.ps1` to build these local
+dependencies, build and install TDLib, compile the real TgGate adapter target,
+and run its smoke test. The resulting TDLib installation is supplied explicitly
+through `TGGATE_TDLIB_PREFIX`.
