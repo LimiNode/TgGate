@@ -245,7 +245,7 @@ bool DesktopUiState::submit_authentication_code(std::string_view code) {
         impl_->auth_error = "Start authorization first";
         return false;
     }
-    const auto accepted = impl_->td_account->submit_code(std::string(code));
+    const auto accepted = impl_->td_account->submit_code(application::security::SecretBuffer(code));
     impl_->auth_error = impl_->td_account->last_error();
     return accepted;
 #else
@@ -261,7 +261,7 @@ bool DesktopUiState::submit_authentication_password(std::string_view password) {
         impl_->auth_error = "Start authorization first";
         return false;
     }
-    const auto accepted = impl_->td_account->submit_password(std::string(password));
+    const auto accepted = impl_->td_account->submit_password(application::security::SecretBuffer(password));
     impl_->auth_error = impl_->td_account->last_error();
     return accepted;
 #else

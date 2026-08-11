@@ -35,7 +35,7 @@ void wipe_string(std::string& value) noexcept {
 class WipeStringOnExit final {
 public:
     explicit WipeStringOnExit(std::string& value) noexcept : value_(value) {}
-    ~WipeStringOnExit() { wipe_string(value_); }
+    ~WipeStringOnExit() noexcept { wipe_string(value_); }
     WipeStringOnExit(const WipeStringOnExit&) = delete;
     WipeStringOnExit& operator=(const WipeStringOnExit&) = delete;
 
@@ -72,31 +72,47 @@ bool TdAccount::begin_authorization(TdAccountOptions options) {
     return true;
 }
 
-bool TdAccount::submit_code(std::string code) {
+bool TdAccount::submit_code(application::security::SecretBuffer code) {
     if (code.empty()) {
         set_error("Authentication code is required");
         return false;
     }
     std::scoped_lock lock(mutex_);
+    if (authorization_input_request_id_ != 0) {
+        last_error_ = "An authorization input request is already in flight";
+        return false;
+    }
     if (!manager_ || authorization_status_ != "Waiting for authentication code") {
         last_error_ = "TDLib is not waiting for an authentication code";
         return false;
     }
-    manager_->send(client_id_, next_request_id_++, make_object<td::td_api::checkAuthenticationCode>(std::move(code)));
+    std::string plain_code(code.view());
+    const WipeStringOnExit wipe_code(plain_code);
+    const auto request_id = next_request_id_++;
+    manager_->send(client_id_, request_id, make_object<td::td_api::checkAuthenticationCode>(std::move(plain_code)));
+    authorization_input_request_id_ = request_id;
     return true;
 }
 
-bool TdAccount::submit_password(std::string password) {
+bool TdAccount::submit_password(application::security::SecretBuffer password) {
     if (password.empty()) {
         set_error("2FA password is required");
         return false;
     }
     std::scoped_lock lock(mutex_);
+    if (authorization_input_request_id_ != 0) {
+        last_error_ = "An authorization input request is already in flight";
+        return false;
+    }
     if (!manager_ || authorization_status_ != "Waiting for 2FA password") {
         last_error_ = "TDLib is not waiting for a 2FA password";
         return false;
     }
-    manager_->send(client_id_, next_request_id_++, make_object<td::td_api::checkAuthenticationPassword>(std::move(password)));
+    std::string plain_password(password.view());
+    const WipeStringOnExit wipe_password(plain_password);
+    const auto request_id = next_request_id_++;
+    manager_->send(client_id_, request_id, make_object<td::td_api::checkAuthenticationPassword>(std::move(plain_password)));
+    authorization_input_request_id_ = request_id;
     return true;
 }
 
@@ -107,6 +123,7 @@ void TdAccount::stop() {
         std::scoped_lock lock(mutex_);
         manager_.reset();
         client_id_ = 0;
+        authorization_input_request_id_ = 0;
         authorization_status_ = "Stopped";
     }
     clear_sensitive_options();
@@ -136,6 +153,7 @@ void TdAccount::receive_loop() {
         }
         if (!response.object) continue;
         if (response.object->get_id() == td::td_api::error::ID) {
+            clear_authorization_input(response.request_id);
             const auto& error = static_cast<const td::td_api::error&>(*response.object);
             set_error("TDLib " + std::to_string(error.code_) + ": " + error.message_);
             continue;
@@ -194,9 +212,15 @@ void TdAccount::clear_sensitive_options() {
     wipe_string(options_.phone_number);
 }
 
+void TdAccount::clear_authorization_input(const std::uint64_t request_id) {
+    std::scoped_lock lock(mutex_);
+    if (authorization_input_request_id_ == request_id) authorization_input_request_id_ = 0;
+}
+
 void TdAccount::set_status(std::string value) {
     std::scoped_lock lock(mutex_);
     authorization_status_ = std::move(value);
+    authorization_input_request_id_ = 0;
 }
 
 void TdAccount::set_error(std::string value) {
