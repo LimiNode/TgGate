@@ -22,6 +22,28 @@ namespace {
 
 constexpr auto kTokenPurpose = "tggate/mcp-host/bearer-token";
 
+void wipe_bytes(std::vector<unsigned char>& value) noexcept {
+    if (value.empty()) return;
+#ifdef _WIN32
+    SecureZeroMemory(value.data(), value.size());
+#else
+    volatile unsigned char* current = value.data();
+    for (std::size_t index = 0; index < value.size(); ++index) current[index] = 0;
+#endif
+    value.clear();
+}
+
+class WipeBytesOnExit final {
+public:
+    explicit WipeBytesOnExit(std::vector<unsigned char>& value) noexcept : value_(value) {}
+    ~WipeBytesOnExit() noexcept { wipe_bytes(value_); }
+    WipeBytesOnExit(const WipeBytesOnExit&) = delete;
+    WipeBytesOnExit& operator=(const WipeBytesOnExit&) = delete;
+
+private:
+    std::vector<unsigned char>& value_;
+};
+
 std::string hex_encode(const std::vector<unsigned char>& bytes) {
     std::ostringstream stream;
     stream << std::hex << std::setfill('0');
@@ -260,8 +282,10 @@ const McpClientCredential* McpHostConfigurationRepository::find_client_credentia
 std::optional<security::SecretBuffer> McpHostConfigurationRepository::unprotect_bearer_token(const std::string_view protected_token) {
     const auto protected_bytes = hex_decode(protected_token);
     if (!protected_bytes) return std::nullopt;
-    const auto plain_bytes = infrastructure::dpapi::DpapiProtector::unprotect(*protected_bytes, kTokenPurpose);
-    if (!plain_bytes || plain_bytes->size() != 64 || !std::all_of(plain_bytes->begin(), plain_bytes->end(), [](const unsigned char value) {
+    auto plain_bytes = infrastructure::dpapi::DpapiProtector::unprotect(*protected_bytes, kTokenPurpose);
+    if (!plain_bytes) return std::nullopt;
+    const WipeBytesOnExit wipe_plain_bytes(*plain_bytes);
+    if (plain_bytes->size() != 64 || !std::all_of(plain_bytes->begin(), plain_bytes->end(), [](const unsigned char value) {
             return std::isxdigit(value) != 0;
         })) return std::nullopt;
     return security::SecretBuffer(std::move(*plain_bytes));

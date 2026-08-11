@@ -221,8 +221,9 @@ std::optional<security::SecretBuffer> AccountRepository::unprotect_api_hash(
     if (account_id.empty()) return std::nullopt;
     const auto protected_bytes = hex_decode(api_hash_dpapi);
     if (!protected_bytes) return std::nullopt;
-    const auto plain_bytes = infrastructure::dpapi::DpapiProtector::unprotect(*protected_bytes, dpapi_purpose(account_id));
+    auto plain_bytes = infrastructure::dpapi::DpapiProtector::unprotect(*protected_bytes, dpapi_purpose(account_id));
     if (!plain_bytes) return std::nullopt;
+    const WipeBytesOnExit wipe_plain_bytes(*plain_bytes);
     return security::SecretBuffer(std::move(*plain_bytes));
 }
 
@@ -263,8 +264,10 @@ std::optional<security::SecretBuffer> AccountRepository::unprotect_database_key(
     if (account_id.empty()) return std::nullopt;
     const auto protected_bytes = hex_decode(database_key_dpapi);
     if (!protected_bytes) return std::nullopt;
-    const auto plain_bytes = infrastructure::dpapi::DpapiProtector::unprotect(*protected_bytes, database_key_dpapi_purpose(account_id));
-    if (!plain_bytes || plain_bytes->size() != 32) return std::nullopt;
+    auto plain_bytes = infrastructure::dpapi::DpapiProtector::unprotect(*protected_bytes, database_key_dpapi_purpose(account_id));
+    if (!plain_bytes) return std::nullopt;
+    const WipeBytesOnExit wipe_plain_bytes(*plain_bytes);
+    if (plain_bytes->size() != 32) return std::nullopt;
     return security::SecretBuffer(std::move(*plain_bytes));
 }
 
