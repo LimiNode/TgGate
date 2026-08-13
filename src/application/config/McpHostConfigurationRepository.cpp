@@ -70,10 +70,18 @@ bool is_loopback(const std::string_view value) {
 }
 
 std::optional<std::string> generate_protected_bearer_token() {
-    const auto token_bytes = infrastructure::crypto::SecureRandom::bytes(32);
+    constexpr char hex_characters[] = "0123456789abcdef";
+
+    auto token_bytes = infrastructure::crypto::SecureRandom::bytes(32);
     if (!token_bytes) return std::nullopt;
-    const auto token_text = hex_encode(*token_bytes);
-    const std::vector<unsigned char> token(token_text.begin(), token_text.end());
+    const WipeBytesOnExit wipe_token_bytes(*token_bytes);
+    std::vector<unsigned char> token(token_bytes->size() * 2);
+    const WipeBytesOnExit wipe_token(token);
+    for (std::size_t index = 0; index < token_bytes->size(); ++index) {
+        const auto byte = (*token_bytes)[index];
+        token[index * 2] = static_cast<unsigned char>(hex_characters[byte >> 4]);
+        token[index * 2 + 1] = static_cast<unsigned char>(hex_characters[byte & 0x0f]);
+    }
     const auto protected_token = infrastructure::dpapi::DpapiProtector::protect(token, kTokenPurpose);
     return protected_token ? std::optional<std::string>(hex_encode(*protected_token)) : std::nullopt;
 }
