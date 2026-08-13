@@ -41,7 +41,7 @@ public:
     [[nodiscard]] static std::optional<std::string> protect_api_hash(
         std::string_view account_id,
         std::string_view api_hash);
-    [[nodiscard]] static std::optional<std::string> unprotect_api_hash(
+    [[nodiscard]] static std::optional<security::SecretBuffer> unprotect_api_hash(
         std::string_view account_id,
         std::string_view api_hash_dpapi);
     [[nodiscard]] static bool ensure_database_key(AccountConfiguration& account, std::string& error);

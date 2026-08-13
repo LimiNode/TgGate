@@ -81,6 +81,56 @@ constexpr std::string_view kMcpPath = "/mcp";
         capabilities != metadata.end() && capabilities->is_object();
 }
 
+[[nodiscard]] std::string_view trim_ascii_whitespace(std::string_view value) noexcept {
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())) != 0) value.remove_prefix(1);
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())) != 0) value.remove_suffix(1);
+    return value;
+}
+
+[[nodiscard]] bool content_type_is_json(const std::string_view content_type) noexcept {
+    const auto separator = content_type.find(';');
+    return ascii_equal_ignore_case(trim_ascii_whitespace(content_type.substr(0, separator)), "application/json");
+}
+
+[[nodiscard]] bool has_positive_quality(std::string_view parameters) noexcept {
+    while (!parameters.empty()) {
+        const auto delimiter = parameters.find(';');
+        const auto parameter = trim_ascii_whitespace(parameters.substr(0, delimiter));
+        const auto separator = parameter.find('=');
+        if (separator != std::string_view::npos && ascii_equal_ignore_case(trim_ascii_whitespace(parameter.substr(0, separator)), "q")) {
+            const auto quality = trim_ascii_whitespace(parameter.substr(separator + 1));
+            if (quality.empty()) return false;
+            const auto decimal = quality.find('.');
+            const auto integral = quality.substr(0, decimal);
+            const auto fractional = decimal == std::string_view::npos ? std::string_view{} : quality.substr(decimal + 1);
+            if ((integral != "0" && integral != "1") || (decimal != std::string_view::npos && fractional.empty())) return false;
+            for (const auto character : fractional) {
+                if (character < '0' || character > '9') return false;
+            }
+            if (integral == "1") return std::all_of(fractional.begin(), fractional.end(), [](const char value) { return value == '0'; });
+            return std::any_of(fractional.begin(), fractional.end(), [](const char value) { return value != '0'; });
+        }
+        if (delimiter == std::string_view::npos) break;
+        parameters.remove_prefix(delimiter + 1);
+    }
+    return true;
+}
+
+[[nodiscard]] bool accepts_media_type(const std::string_view accept, const std::string_view expected) noexcept {
+    std::size_t offset = 0;
+    while (offset <= accept.size()) {
+        const auto delimiter = accept.find(',', offset);
+        auto item = trim_ascii_whitespace(accept.substr(offset, delimiter == std::string_view::npos ? delimiter : delimiter - offset));
+        const auto parameters = item.find(';');
+        const auto media_type = trim_ascii_whitespace(item.substr(0, parameters));
+        if (ascii_equal_ignore_case(media_type, expected) &&
+            (parameters == std::string_view::npos || has_positive_quality(item.substr(parameters + 1)))) return true;
+        if (delimiter == std::string_view::npos) break;
+        offset = delimiter + 1;
+    }
+    return false;
+}
+
 } // namespace
 
 LocalMcpHttpService::LocalMcpHttpService(
@@ -203,6 +253,9 @@ application::http::HttpResponse LocalMcpHttpService::handle(const application::h
         return value.profile.enabled && matches_bearer_token(authorization, value.bearer_token);
     });
     if (client == clients_.end()) return response(401);
+    if (!content_type_is_json(header(request, "Content-Type"))) return response(415);
+    const auto accept = header(request, "Accept");
+    if (!accepts_media_type(accept, "application/json") || !accepts_media_type(accept, "text/event-stream")) return response(406);
 
     try {
         const auto request_json = nlohmann::json::parse(request.body);

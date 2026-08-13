@@ -10,19 +10,39 @@ namespace tggate::infrastructure::dpapi {
 namespace {
 
 #ifdef _WIN32
+class OutputBlob final {
+public:
+    explicit OutputBlob(const bool contains_plain_text) noexcept : contains_plain_text_(contains_plain_text) {}
+    ~OutputBlob() noexcept {
+        if (blob_.pbData == nullptr) return;
+        if (contains_plain_text_ && blob_.cbData != 0) SecureZeroMemory(blob_.pbData, blob_.cbData);
+        LocalFree(blob_.pbData);
+    }
+
+    OutputBlob(const OutputBlob&) = delete;
+    OutputBlob& operator=(const OutputBlob&) = delete;
+
+    [[nodiscard]] DATA_BLOB* get() noexcept { return &blob_; }
+    [[nodiscard]] const DATA_BLOB& value() const noexcept { return blob_; }
+
+private:
+    DATA_BLOB blob_{};
+    bool contains_plain_text_ = false;
+};
+
 std::optional<std::vector<unsigned char>> crypt(
     const std::vector<unsigned char>& input,
     const std::string_view purpose,
     const bool protect) {
     DATA_BLOB data{.cbData = static_cast<DWORD>(input.size()), .pbData = const_cast<BYTE*>(input.data())};
     DATA_BLOB entropy{.cbData = static_cast<DWORD>(purpose.size()), .pbData = reinterpret_cast<BYTE*>(const_cast<char*>(purpose.data()))};
-    DATA_BLOB output{};
+    OutputBlob output(!protect);
     const auto success = protect
-        ? CryptProtectData(&data, L"TgGate", purpose.empty() ? nullptr : &entropy, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &output)
-        : CryptUnprotectData(&data, nullptr, purpose.empty() ? nullptr : &entropy, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &output);
+        ? CryptProtectData(&data, L"TgGate", purpose.empty() ? nullptr : &entropy, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, output.get())
+        : CryptUnprotectData(&data, nullptr, purpose.empty() ? nullptr : &entropy, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, output.get());
     if (!success) return std::nullopt;
-    std::vector<unsigned char> result(output.pbData, output.pbData + output.cbData);
-    LocalFree(output.pbData);
+    const auto& result_blob = output.value();
+    std::vector<unsigned char> result(result_blob.pbData, result_blob.pbData + result_blob.cbData);
     return result;
 }
 #endif

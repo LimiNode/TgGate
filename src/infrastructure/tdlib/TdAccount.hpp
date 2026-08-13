@@ -1,5 +1,7 @@
 #pragma once
 
+#include "application/security/SecretBuffer.hpp"
+
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
@@ -19,7 +21,8 @@ struct TdAccountOptions final {
     std::filesystem::path database_directory;
     std::filesystem::path files_directory;
     std::int32_t api_id = 0;
-    std::string api_hash;
+    application::security::SecretBuffer api_hash;
+    application::security::SecretBuffer database_encryption_key;
     std::string phone_number;
 };
 
@@ -34,8 +37,8 @@ public:
     TdAccount& operator=(const TdAccount&) = delete;
 
     [[nodiscard]] bool begin_authorization(TdAccountOptions options);
-    [[nodiscard]] bool submit_code(std::string code);
-    [[nodiscard]] bool submit_password(std::string password);
+    [[nodiscard]] bool submit_code(application::security::SecretBuffer code);
+    [[nodiscard]] bool submit_password(application::security::SecretBuffer password);
     void stop();
 
     [[nodiscard]] std::string authorization_status() const;
@@ -46,6 +49,8 @@ private:
     void process_response();
     void send_tdlib_parameters();
     void send_phone_number();
+    void clear_sensitive_options();
+    void clear_authorization_input(std::uint64_t request_id);
     void set_status(std::string value);
     void set_error(std::string value);
 
@@ -54,6 +59,7 @@ private:
     std::unique_ptr<td::ClientManager> manager_;
     std::int32_t client_id_ = 0;
     std::uint64_t next_request_id_ = 1;
+    std::uint64_t authorization_input_request_id_ = 0;
     TdAccountOptions options_;
     mutable std::mutex mutex_;
     std::string authorization_status_ = "Stopped";

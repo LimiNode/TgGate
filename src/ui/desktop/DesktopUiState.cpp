@@ -191,7 +191,7 @@ bool DesktopUiState::start_authorization(std::string_view account_id, std::strin
         impl_->auth_error = "Unknown account";
         return false;
     }
-    std::string plain_api_hash;
+    application::security::SecretBuffer plain_api_hash;
     if (!api_hash.empty()) {
         const auto protected_hash = application::config::AccountRepository::protect_api_hash(account_id, api_hash);
         if (!protected_hash) {
@@ -199,19 +199,24 @@ bool DesktopUiState::start_authorization(std::string_view account_id, std::strin
             return false;
         }
         account->api_hash_dpapi = *protected_hash;
-        plain_api_hash = std::string(api_hash);
+        plain_api_hash = application::security::SecretBuffer(api_hash);
     } else {
         const auto unprotected_hash = application::config::AccountRepository::unprotect_api_hash(account_id, account->api_hash_dpapi);
         if (!unprotected_hash) {
             impl_->auth_error = "Enter the API hash once; it will be protected with DPAPI for later use";
             return false;
         }
-        plain_api_hash = *unprotected_hash;
+        plain_api_hash = std::move(*unprotected_hash);
     }
     if (!application::config::AccountRepository::ensure_database_key(*account, impl_->auth_error)) {
         return false;
     }
     if (!application::config::AccountRepository::save(impl_->layout.accounts, impl_->account_configurations, impl_->auth_error)) {
+        return false;
+    }
+    const auto database_key = application::config::AccountRepository::unprotect_database_key(account_id, account->database_key_dpapi);
+    if (!database_key) {
+        impl_->auth_error = "TDLib database key cannot be decrypted for this Windows user and computer";
         return false;
     }
     impl_->td_account = std::make_unique<infrastructure::tdlib::TdAccount>();
@@ -222,6 +227,7 @@ bool DesktopUiState::start_authorization(std::string_view account_id, std::strin
         .files_directory = account->files_directory,
         .api_id = account->api_id,
         .api_hash = std::move(plain_api_hash),
+        .database_encryption_key = std::move(*database_key),
         .phone_number = std::string(phone_number),
     });
     impl_->auth_error = impl_->td_account->last_error();
@@ -239,7 +245,7 @@ bool DesktopUiState::submit_authentication_code(std::string_view code) {
         impl_->auth_error = "Start authorization first";
         return false;
     }
-    const auto accepted = impl_->td_account->submit_code(std::string(code));
+    const auto accepted = impl_->td_account->submit_code(application::security::SecretBuffer(code));
     impl_->auth_error = impl_->td_account->last_error();
     return accepted;
 #else
@@ -255,7 +261,7 @@ bool DesktopUiState::submit_authentication_password(std::string_view password) {
         impl_->auth_error = "Start authorization first";
         return false;
     }
-    const auto accepted = impl_->td_account->submit_password(std::string(password));
+    const auto accepted = impl_->td_account->submit_password(application::security::SecretBuffer(password));
     impl_->auth_error = impl_->td_account->last_error();
     return accepted;
 #else

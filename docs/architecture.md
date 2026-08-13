@@ -44,10 +44,20 @@ headers plus matching JSON-RPC metadata; batches are rejected. It provides
 `server/discover`, `tools/list`, and `tools/call`. WebSocket is not a required
 MCP transport here. The host rejects unknown paths, invalid bearer tokens,
 disabled profiles, and origins absent from `allowed_origins`; it also applies
-request-size and concurrent-request limits. An allowed browser origin receives
+request-size, concurrent-request, and request/content-time limits. It requires
+`Content-Type: application/json` and an `Accept` header covering both JSON and
+SSE. An allowed browser origin receives
 a narrow `OPTIONS` preflight response for `POST` with only the required MCP
 headers. The stdio bridge is a separate process and forwards only to a
 loopback, token-authenticated desktop host.
+
+## TDLib account lifecycle
+
+`TdAccount` is the only `td::ClientManager` owner. It drives TDLib's
+authorization updates, sends phone/code/2FA inputs only while TDLib requests
+them, and owns the decrypted API hash and database-encryption key in
+`SecretBuffer` for the active lifecycle. The DPAPI-protected database key is
+passed to `setTdlibParameters`; it is never persisted as plaintext.
 
 `v2026_07_28` is the implemented protocol adapter. Future revisions must be
 independent handlers rather than scattered version checks.

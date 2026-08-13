@@ -26,6 +26,23 @@ std::string state_name(const td::td_api::AuthorizationState& state) {
     }
 }
 
+void wipe_string(std::string& value) noexcept {
+    volatile char* current = value.empty() ? nullptr : value.data();
+    for (std::size_t index = 0; current && index < value.size(); ++index) current[index] = '\0';
+    value.clear();
+}
+
+class WipeStringOnExit final {
+public:
+    explicit WipeStringOnExit(std::string& value) noexcept : value_(value) {}
+    ~WipeStringOnExit() noexcept { wipe_string(value_); }
+    WipeStringOnExit(const WipeStringOnExit&) = delete;
+    WipeStringOnExit& operator=(const WipeStringOnExit&) = delete;
+
+private:
+    std::string& value_;
+};
+
 } // namespace
 
 TdAccount::TdAccount() = default;
@@ -35,8 +52,8 @@ TdAccount::~TdAccount() {
 }
 
 bool TdAccount::begin_authorization(TdAccountOptions options) {
-    if (options.account_id.empty() || options.api_id <= 0 || options.api_hash.empty() || options.phone_number.empty()) {
-        set_error("Account id, api_id, api_hash, and phone number are required");
+    if (options.account_id.empty() || options.api_id <= 0 || options.api_hash.empty() || options.database_encryption_key.empty() || options.phone_number.empty()) {
+        set_error("Account id, api_id, api_hash, database key, and phone number are required");
         return false;
     }
     stop();
@@ -55,41 +72,65 @@ bool TdAccount::begin_authorization(TdAccountOptions options) {
     return true;
 }
 
-bool TdAccount::submit_code(std::string code) {
+bool TdAccount::submit_code(application::security::SecretBuffer code) {
     if (code.empty()) {
         set_error("Authentication code is required");
         return false;
     }
     std::scoped_lock lock(mutex_);
+    if (authorization_input_request_id_ != 0) {
+        last_error_ = "An authorization input request is already in flight";
+        return false;
+    }
     if (!manager_ || authorization_status_ != "Waiting for authentication code") {
         last_error_ = "TDLib is not waiting for an authentication code";
         return false;
     }
-    manager_->send(client_id_, next_request_id_++, make_object<td::td_api::checkAuthenticationCode>(std::move(code)));
+    std::string plain_code(code.view());
+    const WipeStringOnExit wipe_code(plain_code);
+    const auto request_id = next_request_id_++;
+    manager_->send(client_id_, request_id, make_object<td::td_api::checkAuthenticationCode>(std::move(plain_code)));
+    authorization_input_request_id_ = request_id;
     return true;
 }
 
-bool TdAccount::submit_password(std::string password) {
+bool TdAccount::submit_password(application::security::SecretBuffer password) {
     if (password.empty()) {
         set_error("2FA password is required");
         return false;
     }
     std::scoped_lock lock(mutex_);
+    if (authorization_input_request_id_ != 0) {
+        last_error_ = "An authorization input request is already in flight";
+        return false;
+    }
     if (!manager_ || authorization_status_ != "Waiting for 2FA password") {
         last_error_ = "TDLib is not waiting for a 2FA password";
         return false;
     }
-    manager_->send(client_id_, next_request_id_++, make_object<td::td_api::checkAuthenticationPassword>(std::move(password)));
+    std::string plain_password(password.view());
+    const WipeStringOnExit wipe_password(plain_password);
+    const auto request_id = next_request_id_++;
+    manager_->send(client_id_, request_id, make_object<td::td_api::checkAuthenticationPassword>(std::move(plain_password)));
+    authorization_input_request_id_ = request_id;
     return true;
 }
 
 void TdAccount::stop() {
     running_ = false;
     if (receive_thread_.joinable()) receive_thread_.join();
-    std::scoped_lock lock(mutex_);
-    manager_.reset();
-    client_id_ = 0;
-    authorization_status_ = "Stopped";
+    {
+        std::scoped_lock lock(mutex_);
+        manager_.reset();
+        client_id_ = 0;
+        authorization_input_request_id_ = 0;
+        authorization_status_ = "Stopped";
+    }
+    clear_sensitive_options();
+    {
+        std::scoped_lock lock(mutex_);
+        options_ = {};
+    }
 }
 
 std::string TdAccount::authorization_status() const {
@@ -112,6 +153,7 @@ void TdAccount::receive_loop() {
         }
         if (!response.object) continue;
         if (response.object->get_id() == td::td_api::error::ID) {
+            clear_authorization_input(response.request_id);
             const auto& error = static_cast<const td::td_api::error&>(*response.object);
             set_error("TDLib " + std::to_string(error.code_) + ": " + error.message_);
             continue;
@@ -123,7 +165,13 @@ void TdAccount::receive_loop() {
         switch (update.authorization_state_->get_id()) {
         case td::td_api::authorizationStateWaitTdlibParameters::ID: send_tdlib_parameters(); break;
         case td::td_api::authorizationStateWaitPhoneNumber::ID: send_phone_number(); break;
-        case td::td_api::authorizationStateClosed::ID: running_ = false; break;
+        case td::td_api::authorizationStateClosed::ID:
+            // This runs on the receive thread, so stop() would attempt to
+            // join the current thread. Clear the long-lived sensitive state
+            // directly and leave manager ownership for the later stop().
+            clear_sensitive_options();
+            running_ = false;
+            break;
         default: break;
         }
     }
@@ -137,9 +185,17 @@ void TdAccount::process_response() {
 void TdAccount::send_tdlib_parameters() {
     std::scoped_lock lock(mutex_);
     if (!manager_) return;
-    manager_->send(client_id_, next_request_id_++, make_object<td::td_api::setTdlibParameters>(
-        false, options_.database_directory.string(), options_.files_directory.string(), "",
-        true, true, true, false, options_.api_id, options_.api_hash, "en", "TgGate", "Windows", "0.1.0"));
+    std::string database_key(options_.database_encryption_key.view());
+    std::string api_hash(options_.api_hash.view());
+    const WipeStringOnExit wipe_database_key(database_key);
+    const WipeStringOnExit wipe_api_hash(api_hash);
+    auto parameters = make_object<td::td_api::setTdlibParameters>(
+        false, options_.database_directory.string(), options_.files_directory.string(), database_key,
+        true, true, true, false, options_.api_id, api_hash, "en", "TgGate", "Windows", "0.1.0");
+    // TDLib owns its request copy after send(). Wipe the temporary strings as
+    // soon as that hand-off is complete; TgGate keeps its canonical copies in
+    // SecretBuffer for the account lifecycle.
+    manager_->send(client_id_, next_request_id_++, std::move(parameters));
 }
 
 void TdAccount::send_phone_number() {
@@ -149,9 +205,22 @@ void TdAccount::send_phone_number() {
         make_object<td::td_api::setAuthenticationPhoneNumber>(options_.phone_number, nullptr));
 }
 
+void TdAccount::clear_sensitive_options() {
+    std::scoped_lock lock(mutex_);
+    options_.api_hash.clear();
+    options_.database_encryption_key.clear();
+    wipe_string(options_.phone_number);
+}
+
+void TdAccount::clear_authorization_input(const std::uint64_t request_id) {
+    std::scoped_lock lock(mutex_);
+    if (authorization_input_request_id_ == request_id) authorization_input_request_id_ = 0;
+}
+
 void TdAccount::set_status(std::string value) {
     std::scoped_lock lock(mutex_);
     authorization_status_ = std::move(value);
+    authorization_input_request_id_ = 0;
 }
 
 void TdAccount::set_error(std::string value) {

@@ -76,7 +76,8 @@ and, for named operations, `Mcp-Name`; the JSON-RPC metadata must agree with
 those headers. `server/discover`, `tools/list`, and `tools/call` are available.
 CORS preflight and cross-origin requests are denied unless their exact origin
 appears in `allowed_origins`. The host applies configured body and
-concurrent-request limits. The desktop **Server** page can copy or explicitly
+concurrent-request limits, bounded request/content timeouts, and accepts only
+JSON requests that advertise both JSON and SSE responses as MCP requires. The desktop **Server** page can copy or explicitly
 rotate an individual client's token; rotation immediately invalidates its old
 token. This is local pre-shared bearer authentication, not an MCP OAuth
 authorization server. Tokens are never written to logs. The integration test
@@ -90,6 +91,11 @@ untracked system libraries:
 ```powershell
 cmake -S . -B build -DTGGATE_ENABLE_TDLIB=ON -DTGGATE_TDLIB_PREFIX=C:/path/to/tdlib-install
 ```
+
+The desktop authorization flow protects the Telegram API hash and a random
+TDLib database-encryption key with Windows DPAPI. Both are unprotected only for
+the active `TdAccount` lifecycle and passed to TDLib when it initializes the
+account database.
 
 See [docs/architecture.md](docs/architecture.md) and
 [docs/dependencies.md](docs/dependencies.md).
