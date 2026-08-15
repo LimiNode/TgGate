@@ -34,5 +34,6 @@ the matching DLLs live in `external/openssl/bin` and must be available when a
 TDLib-enabled executable runs. `external/zlib` and `external/gperf` complete
 the remaining prerequisites. Run `tools/build-tdlib.ps1` to build these local
 dependencies, build and install TDLib, compile the real TgGate adapter target,
-and run its smoke test. The resulting TDLib installation is supplied explicitly
+compile the desktop composition root with TDLib and local HTTP enabled, and run
+its adapter smoke test. The resulting TDLib installation is supplied explicitly
 through `TGGATE_TDLIB_PREFIX`.

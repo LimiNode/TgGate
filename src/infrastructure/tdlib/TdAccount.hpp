@@ -1,8 +1,10 @@
 #pragma once
 
 #include "application/security/SecretBuffer.hpp"
+#include "application/TelegramPort.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -39,18 +41,29 @@ public:
     [[nodiscard]] bool begin_authorization(TdAccountOptions options);
     [[nodiscard]] bool submit_code(application::security::SecretBuffer code);
     [[nodiscard]] bool submit_password(application::security::SecretBuffer password);
+    [[nodiscard]] application::Result<std::vector<application::Chat>> list_chats();
+    [[nodiscard]] application::Result<std::vector<application::Message>> get_messages(
+        std::int64_t chat_id, std::size_t limit);
     void stop();
 
     [[nodiscard]] std::string authorization_status() const;
     [[nodiscard]] std::string last_error() const;
 
 private:
+    class ReadRequestRouter;
+    class ReadResult;
+
     void receive_loop();
     void process_response();
     void send_tdlib_parameters();
     void send_phone_number();
     void clear_sensitive_options();
     void clear_authorization_input(std::uint64_t request_id);
+    [[nodiscard]] bool request_read(
+        void* request, ReadResult& result, std::chrono::steady_clock::time_point deadline);
+    [[nodiscard]] bool has_read_request(std::uint64_t request_id) const;
+    void fulfill_read_request(std::uint64_t request_id, void* response);
+    void fail_read_requests(std::string error);
     void set_status(std::string value);
     void set_error(std::string value);
 
@@ -60,10 +73,12 @@ private:
     std::int32_t client_id_ = 0;
     std::uint64_t next_request_id_ = 1;
     std::uint64_t authorization_input_request_id_ = 0;
+    std::unique_ptr<ReadRequestRouter> read_requests_;
     TdAccountOptions options_;
     mutable std::mutex mutex_;
     std::string authorization_status_ = "Stopped";
     std::string last_error_;
+    bool stopping_ = false;
 };
 
 } // namespace tggate::infrastructure::tdlib

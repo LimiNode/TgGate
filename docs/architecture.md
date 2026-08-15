@@ -51,6 +51,15 @@ a narrow `OPTIONS` preflight response for `POST` with only the required MCP
 headers. The stdio bridge is a separate process and forwards only to a
 loopback, token-authenticated desktop host.
 
+## MCP references
+
+The official [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers)
+repository is the implementation reference for TgGate's MCP layer: tool schemas,
+protocol result shapes, lifecycle behaviour, and future prompts/resources work.
+Its servers are educational SDK examples rather than production architecture;
+TgGate keeps its own local-only transport, authentication, policy, approval,
+audit, and TDLib boundaries.
+
 ## TDLib account lifecycle
 
 `TdAccount` is the only `td::ClientManager` owner. It drives TDLib's
@@ -58,6 +67,15 @@ authorization updates, sends phone/code/2FA inputs only while TDLib requests
 them, and owns the decrypted API hash and database-encryption key in
 `SecretBuffer` for the active lifecycle. The DPAPI-protected database key is
 passed to `setTdlibParameters`; it is never persisted as plaintext.
+
+`TdTelegramService` is the infrastructure implementation of
+`ITelegramService`. It registers active `TdAccount` instances by account id and
+is the only bridge used by application services. Its read calls synchronously
+await the matching TDLib response with a bounded timeout; receive-thread
+authorization updates and regular request responses remain serialized inside
+`TdAccount`. Current support is intentionally read-only: chats and text
+messages. The write port remains unavailable until its approval-preserving
+TDLib implementation is added.
 
 `v2026_07_28` is the implemented protocol adapter. Future revisions must be
 independent handlers rather than scattered version checks.

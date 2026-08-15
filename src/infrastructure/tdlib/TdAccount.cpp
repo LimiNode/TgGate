@@ -1,8 +1,12 @@
 #include "infrastructure/tdlib/TdAccount.hpp"
+#include "infrastructure/tdlib/RequestRouter.hpp"
 
 #include <td/telegram/Client.h>
 
+#include <chrono>
+#include <condition_variable>
 #include <utility>
+#include <vector>
 
 namespace tggate::infrastructure::tdlib {
 namespace {
@@ -43,9 +47,22 @@ private:
     std::string& value_;
 };
 
+constexpr auto kReadRequestTimeout = std::chrono::seconds(10);
+
 } // namespace
 
-TdAccount::TdAccount() = default;
+class TdAccount::ReadRequestRouter final {
+public:
+    RequestRouter<td::td_api::object_ptr<td::td_api::Object>> router;
+};
+
+class TdAccount::ReadResult final {
+public:
+    td::td_api::object_ptr<td::td_api::Object> response;
+    std::string error;
+};
+
+TdAccount::TdAccount() : read_requests_(std::make_unique<ReadRequestRouter>()) {}
 
 TdAccount::~TdAccount() {
     stop();
@@ -59,14 +76,16 @@ bool TdAccount::begin_authorization(TdAccountOptions options) {
     stop();
     {
         std::scoped_lock lock(mutex_);
+        read_requests_->router.reopen();
         options_ = std::move(options);
         last_error_.clear();
         authorization_status_ = "Starting TDLib";
+        stopping_ = false;
         manager_ = std::make_unique<td::ClientManager>();
         client_id_ = manager_->create_client_id();
         next_request_id_ = 1;
+        running_ = true;
     }
-    running_ = true;
     receive_thread_ = std::thread([this] { receive_loop(); });
     process_response(); // getAuthorizationState activates the freshly-created TDLib client.
     return true;
@@ -116,8 +135,65 @@ bool TdAccount::submit_password(application::security::SecretBuffer password) {
     return true;
 }
 
+application::Result<std::vector<application::Chat>> TdAccount::list_chats() {
+    const auto deadline = std::chrono::steady_clock::now() + kReadRequestTimeout;
+    ReadResult listed;
+    auto request = make_object<td::td_api::getChats>(make_object<td::td_api::chatListMain>(), 100);
+    if (!request_read(request.release(), listed, deadline)) return std::move(listed.error);
+    if (!listed.response || listed.response->get_id() != td::td_api::chats::ID) {
+        return std::string("TDLib returned an unexpected chat list response");
+    }
+
+    const auto& listed_chats = static_cast<const td::td_api::chats&>(*listed.response);
+    std::vector<application::Chat> result;
+    result.reserve(listed_chats.chat_ids_.size());
+    for (const auto chat_id : listed_chats.chat_ids_) {
+        ReadResult chat_result;
+        auto chat_request = make_object<td::td_api::getChat>(chat_id);
+        if (!request_read(chat_request.release(), chat_result, deadline)) return std::move(chat_result.error);
+        if (!chat_result.response || chat_result.response->get_id() != td::td_api::chat::ID) {
+            return std::string("TDLib returned an unexpected chat response");
+        }
+        const auto& chat = static_cast<const td::td_api::chat&>(*chat_result.response);
+        result.push_back({.id = chat.id_, .title = chat.title_});
+    }
+    return result;
+}
+
+application::Result<std::vector<application::Message>> TdAccount::get_messages(
+    const std::int64_t chat_id, const std::size_t limit) {
+    if (chat_id == 0 || limit == 0 || limit > 100) return std::string("Chat id and a message limit from 1 to 100 are required");
+    ReadResult history;
+    auto request = make_object<td::td_api::getChatHistory>(chat_id, 0, 0, static_cast<std::int32_t>(limit), false);
+    if (!request_read(request.release(), history, std::chrono::steady_clock::now() + kReadRequestTimeout)) {
+        return std::move(history.error);
+    }
+    if (!history.response || history.response->get_id() != td::td_api::messages::ID) {
+        return std::string("TDLib returned an unexpected message history response");
+    }
+
+    const auto& history_messages = static_cast<const td::td_api::messages&>(*history.response);
+    std::vector<application::Message> result;
+    result.reserve(history_messages.messages_.size());
+    for (const auto& message : history_messages.messages_) {
+        if (!message || !message->content_ || message->content_->get_id() != td::td_api::messageText::ID) continue;
+        const auto& content = static_cast<const td::td_api::messageText&>(*message->content_);
+        if (!content.text_) continue;
+        result.push_back({.id = message->id_, .chat_id = message->chat_id_, .text = content.text_->text_});
+    }
+    return result;
+}
+
 void TdAccount::stop() {
-    running_ = false;
+    {
+        std::scoped_lock lock(mutex_);
+        if (manager_ && !stopping_) {
+            stopping_ = true;
+            authorization_status_ = "Closing";
+            manager_->send(client_id_, next_request_id_++, make_object<td::td_api::close>());
+        }
+    }
+    fail_read_requests("TDLib account stopped");
     if (receive_thread_.joinable()) receive_thread_.join();
     {
         std::scoped_lock lock(mutex_);
@@ -125,6 +201,8 @@ void TdAccount::stop() {
         client_id_ = 0;
         authorization_input_request_id_ = 0;
         authorization_status_ = "Stopped";
+        stopping_ = false;
+        running_ = false;
     }
     clear_sensitive_options();
     {
@@ -152,6 +230,11 @@ void TdAccount::receive_loop() {
             response = manager_->receive(0.1);
         }
         if (!response.object) continue;
+        if (has_read_request(response.request_id)) {
+            fulfill_read_request(response.request_id, response.object.release());
+            continue;
+        }
+        if (read_requests_->router.discard_late(response.request_id)) continue;
         if (response.object->get_id() == td::td_api::error::ID) {
             clear_authorization_input(response.request_id);
             const auto& error = static_cast<const td::td_api::error&>(*response.object);
@@ -170,7 +253,12 @@ void TdAccount::receive_loop() {
             // join the current thread. Clear the long-lived sensitive state
             // directly and leave manager ownership for the later stop().
             clear_sensitive_options();
-            running_ = false;
+            fail_read_requests("TDLib authorization was closed");
+            {
+                std::scoped_lock lock(mutex_);
+                stopping_ = true;
+                running_ = false;
+            }
             break;
         default: break;
         }
@@ -215,6 +303,54 @@ void TdAccount::clear_sensitive_options() {
 void TdAccount::clear_authorization_input(const std::uint64_t request_id) {
     std::scoped_lock lock(mutex_);
     if (authorization_input_request_id_ == request_id) authorization_input_request_id_ = 0;
+}
+
+bool TdAccount::request_read(
+    void* raw_request, ReadResult& result, const std::chrono::steady_clock::time_point deadline) {
+    td::td_api::object_ptr<td::td_api::Function> request(static_cast<td::td_api::Function*>(raw_request));
+    std::uint64_t request_id = 0;
+    RequestRouter<td::td_api::object_ptr<td::td_api::Object>>::Ticket ticket;
+    {
+        std::scoped_lock lock(mutex_);
+        if (!running_ || stopping_ || !manager_ || authorization_status_ != "Authorized") {
+            result.error = "Telegram account is not authorized";
+            return false;
+        }
+        request_id = next_request_id_++;
+        ticket = read_requests_->router.open(request_id);
+        if (!ticket) {
+            result.error = "Telegram account is stopping";
+            return false;
+        }
+        manager_->send(client_id_, request_id, std::move(request));
+    }
+    auto response = read_requests_->router.wait(request_id, ticket, deadline);
+    result.error = std::move(response.error);
+    if (!result.error.empty()) return false;
+    if (!response.response) {
+        result.error = "TDLib read request completed without a response";
+        return false;
+    }
+    result.response = std::move(*response.response);
+    if (result.response && result.response->get_id() == td::td_api::error::ID) {
+        const auto& error = static_cast<const td::td_api::error&>(*result.response);
+        result.error = "TDLib " + std::to_string(error.code_) + ": " + error.message_;
+        return false;
+    }
+    return result.response != nullptr;
+}
+
+bool TdAccount::has_read_request(const std::uint64_t request_id) const {
+    return read_requests_->router.contains(request_id);
+}
+
+void TdAccount::fulfill_read_request(const std::uint64_t request_id, void* raw_response) {
+    td::td_api::object_ptr<td::td_api::Object> response(static_cast<td::td_api::Object*>(raw_response));
+    static_cast<void>(read_requests_->router.fulfill(request_id, std::move(response)));
+}
+
+void TdAccount::fail_read_requests(std::string error) {
+    read_requests_->router.close(std::move(error));
 }
 
 void TdAccount::set_status(std::string value) {

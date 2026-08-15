@@ -13,6 +13,7 @@
 
 #include <filesystem>
 #include <algorithm>
+#include <memory>
 
 #ifdef TGGATE_WITH_HTTP_HOST
 #include "infrastructure/http/SimpleWebHttpHost.hpp"
@@ -20,7 +21,7 @@
 #endif
 
 #ifdef TGGATE_WITH_TDLIB
-#include "infrastructure/tdlib/TdAccount.hpp"
+#include "infrastructure/tdlib/TdTelegramService.hpp"
 #endif
 
 namespace tggate::ui::desktop {
@@ -56,7 +57,11 @@ public:
 #endif
     }
 
+#ifdef TGGATE_WITH_TDLIB
+    infrastructure::tdlib::TdTelegramService telegram;
+#else
     application::UnavailableTelegramService telegram;
+#endif
     domain::policy::PolicyEngine policy;
     domain::approval::ApprovalService approvals;
     application::AuditService audit;
@@ -78,7 +83,6 @@ public:
     std::string configuration_status;
     std::string auth_error = "TDLib integration is not enabled in this build";
 #ifdef TGGATE_WITH_TDLIB
-    std::unique_ptr<infrastructure::tdlib::TdAccount> td_account;
     std::string active_account_id;
 #endif
     bool lockdown_active = false;
@@ -146,7 +150,10 @@ bool DesktopUiState::regenerate_mcp_bearer_token(const std::string_view client_i
 
 std::string DesktopUiState::telegram_status() const {
 #ifdef TGGATE_WITH_TDLIB
-    if (impl_->td_account) return impl_->td_account->authorization_status();
+    if (!impl_->active_account_id.empty()) {
+        const auto account = impl_->telegram.find(impl_->active_account_id);
+        if (account) return account->authorization_status();
+    }
 #endif
     return "TDLib account is not configured";
 }
@@ -163,9 +170,8 @@ std::vector<AccountRow> DesktopUiState::accounts() const {
     result.reserve(impl_->account_configurations.size());
     for (const auto& account : impl_->account_configurations) {
 #ifdef TGGATE_WITH_TDLIB
-        const auto status = impl_->td_account && account.id == impl_->active_account_id
-            ? impl_->td_account->authorization_status()
-            : "Not started";
+        const auto td_account = impl_->telegram.find(account.id);
+        const auto status = td_account ? td_account->authorization_status() : "Not started";
 #else
         const auto status = account.api_id > 0 && !account.api_hash_dpapi.empty()
             ? std::string("Credentials configured; TDLib is disabled")
@@ -201,7 +207,7 @@ bool DesktopUiState::start_authorization(std::string_view account_id, std::strin
         account->api_hash_dpapi = *protected_hash;
         plain_api_hash = application::security::SecretBuffer(api_hash);
     } else {
-        const auto unprotected_hash = application::config::AccountRepository::unprotect_api_hash(account_id, account->api_hash_dpapi);
+        auto unprotected_hash = application::config::AccountRepository::unprotect_api_hash(account_id, account->api_hash_dpapi);
         if (!unprotected_hash) {
             impl_->auth_error = "Enter the API hash once; it will be protected with DPAPI for later use";
             return false;
@@ -214,14 +220,13 @@ bool DesktopUiState::start_authorization(std::string_view account_id, std::strin
     if (!application::config::AccountRepository::save(impl_->layout.accounts, impl_->account_configurations, impl_->auth_error)) {
         return false;
     }
-    const auto database_key = application::config::AccountRepository::unprotect_database_key(account_id, account->database_key_dpapi);
+    auto database_key = application::config::AccountRepository::unprotect_database_key(account_id, account->database_key_dpapi);
     if (!database_key) {
         impl_->auth_error = "TDLib database key cannot be decrypted for this Windows user and computer";
         return false;
     }
-    impl_->td_account = std::make_unique<infrastructure::tdlib::TdAccount>();
-    impl_->active_account_id = account->id;
-    const auto started = impl_->td_account->begin_authorization({
+    const auto td_account = std::make_shared<infrastructure::tdlib::TdAccount>();
+    const auto started = td_account->begin_authorization({
         .account_id = account->id,
         .database_directory = account->database_directory,
         .files_directory = account->files_directory,
@@ -230,7 +235,11 @@ bool DesktopUiState::start_authorization(std::string_view account_id, std::strin
         .database_encryption_key = std::move(*database_key),
         .phone_number = std::string(phone_number),
     });
-    impl_->auth_error = impl_->td_account->last_error();
+    impl_->auth_error = td_account->last_error();
+    if (started) {
+        impl_->telegram.attach(account->id, td_account);
+        impl_->active_account_id = account->id;
+    }
     return started;
 #else
     static_cast<void>(account_id); static_cast<void>(phone_number); static_cast<void>(api_hash);
@@ -241,12 +250,13 @@ bool DesktopUiState::start_authorization(std::string_view account_id, std::strin
 
 bool DesktopUiState::submit_authentication_code(std::string_view code) {
 #ifdef TGGATE_WITH_TDLIB
-    if (!impl_->td_account) {
+    const auto td_account = impl_->telegram.find(impl_->active_account_id);
+    if (!td_account) {
         impl_->auth_error = "Start authorization first";
         return false;
     }
-    const auto accepted = impl_->td_account->submit_code(application::security::SecretBuffer(code));
-    impl_->auth_error = impl_->td_account->last_error();
+    const auto accepted = td_account->submit_code(application::security::SecretBuffer(code));
+    impl_->auth_error = td_account->last_error();
     return accepted;
 #else
     static_cast<void>(code);
@@ -257,12 +267,13 @@ bool DesktopUiState::submit_authentication_code(std::string_view code) {
 
 bool DesktopUiState::submit_authentication_password(std::string_view password) {
 #ifdef TGGATE_WITH_TDLIB
-    if (!impl_->td_account) {
+    const auto td_account = impl_->telegram.find(impl_->active_account_id);
+    if (!td_account) {
         impl_->auth_error = "Start authorization first";
         return false;
     }
-    const auto accepted = impl_->td_account->submit_password(application::security::SecretBuffer(password));
-    impl_->auth_error = impl_->td_account->last_error();
+    const auto accepted = td_account->submit_password(application::security::SecretBuffer(password));
+    impl_->auth_error = td_account->last_error();
     return accepted;
 #else
     static_cast<void>(password);
