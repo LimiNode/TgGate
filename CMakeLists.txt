@@ -203,7 +203,9 @@ endif()
 if(TGGATE_ENABLE_TDLIB)
     tggate_require_external("external/tdlib")
     tggate_require_external("external/openssl")
-    add_library(tggate_tdlib STATIC src/infrastructure/tdlib/TdAccount.cpp)
+    add_library(tggate_tdlib STATIC
+        src/infrastructure/tdlib/TdAccount.cpp
+        src/infrastructure/tdlib/TdTelegramService.cpp)
     target_include_directories(tggate_tdlib PUBLIC src)
     # TDLib is built separately. Its installed CMake package propagates its
     # generated headers and OpenSSL/zlib link requirements without guessing files.

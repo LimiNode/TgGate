@@ -51,9 +51,9 @@ Invoke-CMake @("-S", (Join-Path $projectRoot "external/tdlib"), "-B", $tdlibBuil
 Invoke-CMake @("--build", $tdlibBuild, "--target", "install", "--parallel")
 
 Invoke-CMake @("-S", $projectRoot, "-B", (Join-Path $BuildRoot "tggate"), "-G", "Ninja",
-    "-DTGGATE_ENABLE_TDLIB=ON", "-DTGGATE_BUILD_UI_MODEL=OFF", "-DTGGATE_BUILD_TESTS=ON",
+    "-DTGGATE_ENABLE_TDLIB=ON", "-DTGGATE_ENABLE_HTTP_HOST=ON", "-DTGGATE_BUILD_UI_MODEL=ON", "-DTGGATE_BUILD_TESTS=ON",
     "-DTGGATE_TDLIB_PREFIX=$tdlibPrefix")
-Invoke-CMake @("--build", (Join-Path $BuildRoot "tggate"), "--target", "tggate_tdlib_adapter_smoke", "--parallel")
+Invoke-CMake @("--build", (Join-Path $BuildRoot "tggate"), "--target", "tggate_desktop", "tggate_tdlib_adapter_smoke", "--parallel")
 
 & ctest --test-dir (Join-Path $BuildRoot "tggate") --tests-regex "^tggate_tdlib_adapter_smoke$" --output-on-failure
 if ($LASTEXITCODE -ne 0) { throw "TDLib adapter smoke test failed" }
