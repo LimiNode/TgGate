@@ -51,6 +51,15 @@ a narrow `OPTIONS` preflight response for `POST` with only the required MCP
 headers. The stdio bridge is a separate process and forwards only to a
 loopback, token-authenticated desktop host.
 
+## MCP references
+
+The official [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers)
+repository is the implementation reference for TgGate's MCP layer: tool schemas,
+protocol result shapes, lifecycle behaviour, and future prompts/resources work.
+Its servers are educational SDK examples rather than production architecture;
+TgGate keeps its own local-only transport, authentication, policy, approval,
+audit, and TDLib boundaries.
+
 ## TDLib account lifecycle
 
 `TdAccount` is the only `td::ClientManager` owner. It drives TDLib's

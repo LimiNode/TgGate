@@ -4,13 +4,13 @@
 #include "application/TelegramPort.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
-#include <unordered_map>
 
 namespace td {
 class ClientManager;
@@ -50,7 +50,7 @@ public:
     [[nodiscard]] std::string last_error() const;
 
 private:
-    class ReadRequestState;
+    class ReadRequestRouter;
     class ReadResult;
 
     void receive_loop();
@@ -59,7 +59,8 @@ private:
     void send_phone_number();
     void clear_sensitive_options();
     void clear_authorization_input(std::uint64_t request_id);
-    [[nodiscard]] bool request_read(void* request, ReadResult& result);
+    [[nodiscard]] bool request_read(
+        void* request, ReadResult& result, std::chrono::steady_clock::time_point deadline);
     [[nodiscard]] bool has_read_request(std::uint64_t request_id) const;
     void fulfill_read_request(std::uint64_t request_id, void* response);
     void fail_read_requests(std::string error);
@@ -72,11 +73,12 @@ private:
     std::int32_t client_id_ = 0;
     std::uint64_t next_request_id_ = 1;
     std::uint64_t authorization_input_request_id_ = 0;
-    std::unordered_map<std::uint64_t, std::shared_ptr<ReadRequestState>> read_requests_;
+    std::unique_ptr<ReadRequestRouter> read_requests_;
     TdAccountOptions options_;
     mutable std::mutex mutex_;
     std::string authorization_status_ = "Stopped";
     std::string last_error_;
+    bool stopping_ = false;
 };
 
 } // namespace tggate::infrastructure::tdlib
