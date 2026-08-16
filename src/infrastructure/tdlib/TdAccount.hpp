@@ -44,6 +44,8 @@ public:
     [[nodiscard]] application::Result<std::vector<application::Chat>> list_chats();
     [[nodiscard]] application::Result<std::vector<application::Message>> get_messages(
         std::int64_t chat_id, std::size_t limit);
+    [[nodiscard]] application::Result<application::Message> send_message(
+        std::int64_t chat_id, std::string_view text);
     void stop();
 
     [[nodiscard]] std::string authorization_status() const;
@@ -59,7 +61,7 @@ private:
     void send_phone_number();
     void clear_sensitive_options();
     void clear_authorization_input(std::uint64_t request_id);
-    [[nodiscard]] bool request_read(
+    [[nodiscard]] bool request_tdlib(
         void* request, ReadResult& result, std::chrono::steady_clock::time_point deadline);
     [[nodiscard]] bool has_read_request(std::uint64_t request_id) const;
     void fulfill_read_request(std::uint64_t request_id, void* response);

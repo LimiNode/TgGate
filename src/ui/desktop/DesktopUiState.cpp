@@ -27,11 +27,22 @@
 namespace tggate::ui::desktop {
 namespace {
 
+[[nodiscard]] nlohmann::json object_schema(nlohmann::json properties, nlohmann::json required) {
+    return {{"type", "object"}, {"properties", std::move(properties)}, {"required", std::move(required)},
+        {"additionalProperties", false}};
+}
+
 void add_default_tools(mcp::core::ToolRegistry& tools) {
-    tools.add({"telegram_list_chats", "List allowlisted Telegram chats", mcp::core::ToolSurface::read, nlohmann::json::object()});
-    tools.add({"telegram_get_messages", "Read messages from an allowlisted Telegram chat", mcp::core::ToolSurface::read, nlohmann::json::object()});
-    tools.add({"telegram_prepare_send_message", "Prepare a Telegram message for approval", mcp::core::ToolSurface::write, nlohmann::json::object()});
-    tools.add({"telegram_execute_approved_action", "Execute an approved Telegram write", mcp::core::ToolSurface::write, nlohmann::json::object()});
+    tools.add({"telegram_list_chats", "List allowlisted Telegram chats", mcp::core::ToolSurface::read,
+        object_schema({{"account_id", {{"type", "string"}}}}, {"account_id"})});
+    tools.add({"telegram_get_messages", "Read messages from an allowlisted Telegram chat", mcp::core::ToolSurface::read,
+        object_schema({{"account_id", {{"type", "string"}}}, {"chat_id", {{"type", "integer"}}},
+            {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 100}}}}, {"account_id", "chat_id"})});
+    tools.add({"telegram_prepare_send_message", "Prepare a Telegram message for local approval", mcp::core::ToolSurface::write,
+        object_schema({{"account_id", {{"type", "string"}}}, {"chat_id", {{"type", "integer"}}},
+            {"text", {{"type", "string"}, {"minLength", 1}, {"maxLength", 4096}}}}, {"account_id", "chat_id", "text"})});
+    tools.add({"telegram_execute_approved_action", "Execute a locally approved Telegram write", mcp::core::ToolSurface::write,
+        object_schema({{"action_id", {{"type", "string"}}}}, {"action_id"})});
 }
 
 } // namespace

@@ -12,6 +12,7 @@
 #include "mcp/v2025_11_25/ProtocolHandler.hpp"
 
 #include <cassert>
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 
@@ -19,6 +20,7 @@ namespace {
 
 class FakeTelegramService final : public tggate::application::ITelegramService {
 public:
+    std::size_t sent_message_count = 0;
     [[nodiscard]] tggate::application::Result<std::vector<tggate::application::Chat>> list_chats(std::string_view) override {
         return std::vector<tggate::application::Chat>{{.id = 42, .title = "Development"}, {.id = 100, .title = "Private"}};
     }
@@ -28,6 +30,7 @@ public:
     }
     [[nodiscard]] tggate::application::Result<tggate::application::Message> send_message(
         std::string_view, std::int64_t chat_id, std::string_view text) override {
+        ++sent_message_count;
         return tggate::application::Message{.id = 7, .chat_id = chat_id, .text = std::string(text)};
     }
 };
@@ -47,6 +50,7 @@ public:
 
 int main() {
     using namespace tggate;
+    using namespace std::chrono_literals;
 
     domain::policy::PolicyEngine policy;
     const auto client = profile();
@@ -81,6 +85,25 @@ int main() {
     assert(approvals.approve(action_id).has_value());
     assert(service.execute_approved_action(client, action_id).at("ok"));
     assert(!service.execute_approved_action(client, action_id).at("ok"));
+    assert(telegram.sent_message_count == 1);
+
+    const domain::policy::ToolInvocation write_invocation{
+        .tool_name = "telegram_prepare_send_message", .account_id = "work", .chat_id = 42, .is_write = true};
+    const auto expired = approvals.prepare(client.id, write_invocation, {{"text", "expired"}}, -1s);
+    assert(!approvals.approve(expired.id));
+
+    const auto revoked = approvals.prepare(client.id, write_invocation, {{"text", "revoked"}});
+    assert(approvals.approve(revoked.id));
+    auto revoked_profile = client;
+    revoked_profile.allowed_chats.clear();
+    assert(!approvals.take_approved_for_execution(revoked.id, revoked_profile, policy));
+
+    const auto locked_down = service.prepare_send_message(client, "work", 42, "lockdown");
+    const auto locked_down_id = locked_down.at("action_id").get<std::string>();
+    assert(approvals.approve(locked_down_id));
+    approvals.lockdown();
+    assert(!service.execute_approved_action(client, locked_down_id).at("ok"));
+    assert(telegram.sent_message_count == 1);
 
     mcp::core::ToolRegistry tools;
     tools.add({"telegram_get_messages", "Read an allowlisted chat", mcp::core::ToolSurface::read, nlohmann::json::object()});

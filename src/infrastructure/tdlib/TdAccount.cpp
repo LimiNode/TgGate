@@ -139,7 +139,7 @@ application::Result<std::vector<application::Chat>> TdAccount::list_chats() {
     const auto deadline = std::chrono::steady_clock::now() + kReadRequestTimeout;
     ReadResult listed;
     auto request = make_object<td::td_api::getChats>(make_object<td::td_api::chatListMain>(), 100);
-    if (!request_read(request.release(), listed, deadline)) return std::move(listed.error);
+    if (!request_tdlib(request.release(), listed, deadline)) return std::move(listed.error);
     if (!listed.response || listed.response->get_id() != td::td_api::chats::ID) {
         return std::string("TDLib returned an unexpected chat list response");
     }
@@ -150,7 +150,7 @@ application::Result<std::vector<application::Chat>> TdAccount::list_chats() {
     for (const auto chat_id : listed_chats.chat_ids_) {
         ReadResult chat_result;
         auto chat_request = make_object<td::td_api::getChat>(chat_id);
-        if (!request_read(chat_request.release(), chat_result, deadline)) return std::move(chat_result.error);
+        if (!request_tdlib(chat_request.release(), chat_result, deadline)) return std::move(chat_result.error);
         if (!chat_result.response || chat_result.response->get_id() != td::td_api::chat::ID) {
             return std::string("TDLib returned an unexpected chat response");
         }
@@ -165,7 +165,7 @@ application::Result<std::vector<application::Message>> TdAccount::get_messages(
     if (chat_id == 0 || limit == 0 || limit > 100) return std::string("Chat id and a message limit from 1 to 100 are required");
     ReadResult history;
     auto request = make_object<td::td_api::getChatHistory>(chat_id, 0, 0, static_cast<std::int32_t>(limit), false);
-    if (!request_read(request.release(), history, std::chrono::steady_clock::now() + kReadRequestTimeout)) {
+    if (!request_tdlib(request.release(), history, std::chrono::steady_clock::now() + kReadRequestTimeout)) {
         return std::move(history.error);
     }
     if (!history.response || history.response->get_id() != td::td_api::messages::ID) {
@@ -182,6 +182,28 @@ application::Result<std::vector<application::Message>> TdAccount::get_messages(
         result.push_back({.id = message->id_, .chat_id = message->chat_id_, .text = content.text_->text_});
     }
     return result;
+}
+
+application::Result<application::Message> TdAccount::send_message(
+    const std::int64_t chat_id, const std::string_view text) {
+    if (chat_id == 0 || text.empty() || text.size() > 4096) {
+        return std::string("Chat id and message text from 1 to 4096 bytes are required");
+    }
+    std::string plain_text(text);
+    const WipeStringOnExit wipe_text(plain_text);
+    auto content = make_object<td::td_api::inputMessageText>(
+        make_object<td::td_api::formattedText>(plain_text, td::td_api::array<td::td_api::object_ptr<td::td_api::textEntity>>{}),
+        nullptr, false);
+    auto request = make_object<td::td_api::sendMessage>(chat_id, nullptr, nullptr, nullptr, nullptr, std::move(content));
+    ReadResult response;
+    if (!request_tdlib(request.release(), response, std::chrono::steady_clock::now() + kReadRequestTimeout)) {
+        return std::move(response.error);
+    }
+    if (!response.response || response.response->get_id() != td::td_api::message::ID) {
+        return std::string("TDLib returned an unexpected send-message response");
+    }
+    const auto& message = static_cast<const td::td_api::message&>(*response.response);
+    return application::Message{.id = message.id_, .chat_id = message.chat_id_};
 }
 
 void TdAccount::stop() {
@@ -305,7 +327,7 @@ void TdAccount::clear_authorization_input(const std::uint64_t request_id) {
     if (authorization_input_request_id_ == request_id) authorization_input_request_id_ = 0;
 }
 
-bool TdAccount::request_read(
+bool TdAccount::request_tdlib(
     void* raw_request, ReadResult& result, const std::chrono::steady_clock::time_point deadline) {
     td::td_api::object_ptr<td::td_api::Function> request(static_cast<td::td_api::Function*>(raw_request));
     std::uint64_t request_id = 0;

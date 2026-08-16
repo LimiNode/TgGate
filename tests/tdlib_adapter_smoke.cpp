@@ -15,8 +15,10 @@ int main() {
     telegram.attach("work", account);
     const auto missing = telegram.list_chats("missing");
     const auto unauthorized = telegram.list_chats("work");
+    const auto unauthorized_send = telegram.send_message("work", 42, "hello");
     return !missing && missing.error() == "Telegram account is not running" &&
-                   !unauthorized && unauthorized.error() == "Telegram account is not authorized"
+                   !unauthorized && unauthorized.error() == "Telegram account is not authorized" &&
+                   !unauthorized_send && unauthorized_send.error() == "Telegram account is not authorized"
                ? 0
                : 1;
 }

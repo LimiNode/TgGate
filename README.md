@@ -95,10 +95,12 @@ cmake -S . -B build -DTGGATE_ENABLE_TDLIB=ON -DTGGATE_TDLIB_PREFIX=C:/path/to/td
 The desktop authorization flow protects the Telegram API hash and a random
 TDLib database-encryption key with Windows DPAPI. Both are unprotected only for
 the active `TdAccount` lifecycle and passed to TDLib when it initializes the
-account database. Once an account is authorized, the read-only MCP tools return
-its chat list and text-message history through the TDLib adapter. Telegram
-writes remain unavailable until the separate approval-preserving write slice is
-implemented.
+account database. Once an account is authorized, MCP tools return its chat list
+and text-message history through the TDLib adapter. Telegram text sends are
+available only through the single-use, expiring `prepare -> local approve ->
+execute` workflow, which re-checks current policy before TDLib receives a send
+request.
 
 See [docs/architecture.md](docs/architecture.md) and
-[docs/dependencies.md](docs/dependencies.md).
+[docs/dependencies.md](docs/dependencies.md). A real-account validation is
+documented in [docs/manual-acceptance.md](docs/manual-acceptance.md).
