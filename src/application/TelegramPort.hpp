@@ -21,7 +21,7 @@ struct Message {
 enum class MessageDeliveryStatus { sent, delivery_unknown };
 
 struct SendMessageResult {
-    Message message;
+    std::optional<Message> message;
     MessageDeliveryStatus delivery_status = MessageDeliveryStatus::delivery_unknown;
 };
 

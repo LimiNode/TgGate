@@ -9,13 +9,13 @@ void SendDeliveryTracker::reopen() {
     std::scoped_lock lock(mutex_);
     outcomes_.clear();
     order_.clear();
-    closed_error_.clear();
+    closed_ = false;
 }
 
-void SendDeliveryTracker::close(std::string error) {
+void SendDeliveryTracker::close() {
     {
         std::scoped_lock lock(mutex_);
-        closed_error_ = std::move(error);
+        closed_ = true;
     }
     changed_.notify_all();
 }
@@ -33,7 +33,7 @@ DeliveryOutcome SendDeliveryTracker::wait(
     const std::int64_t old_message_id, const std::chrono::steady_clock::time_point deadline) {
     std::unique_lock lock(mutex_);
     changed_.wait_until(lock, deadline, [this, old_message_id] {
-        return !closed_error_.empty() || outcomes_.contains(old_message_id);
+        return closed_ || outcomes_.contains(old_message_id);
     });
     if (const auto found = outcomes_.find(old_message_id); found != outcomes_.end()) {
         auto outcome = std::move(found->second);
@@ -42,7 +42,7 @@ DeliveryOutcome SendDeliveryTracker::wait(
         if (order_entry != order_.end()) order_.erase(order_entry);
         return outcome;
     }
-    if (!closed_error_.empty()) return {.state = DeliveryState::failed, .error = closed_error_};
+    if (closed_) return {.state = DeliveryState::unknown};
     return {.state = DeliveryState::unknown};
 }
 

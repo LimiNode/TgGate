@@ -7,7 +7,17 @@
 int main() {
     using namespace std::chrono_literals;
     using tggate::infrastructure::tdlib::DeliveryState;
+    using tggate::infrastructure::tdlib::RequestCompletion;
     using tggate::infrastructure::tdlib::SendDeliveryTracker;
+
+    assert(tggate::infrastructure::tdlib::classify_initial_send_failure(
+               true, RequestCompletion::timed_out) == DeliveryState::unknown);
+    assert(tggate::infrastructure::tdlib::classify_initial_send_failure(
+               true, RequestCompletion::closed) == DeliveryState::unknown);
+    assert(tggate::infrastructure::tdlib::classify_initial_send_failure(
+               false, RequestCompletion::closed) == DeliveryState::failed);
+    assert(tggate::infrastructure::tdlib::classify_initial_send_failure(
+               true, RequestCompletion::response) == DeliveryState::failed);
 
     SendDeliveryTracker tracker;
     tracker.reopen();
@@ -22,8 +32,8 @@ int main() {
     const auto timeout = tracker.wait(-12, std::chrono::steady_clock::now());
     assert(timeout.state == DeliveryState::unknown);
 
-    tracker.close("TDLib account stopped");
+    tracker.close();
     const auto closed = tracker.wait(-13, std::chrono::steady_clock::now() + 1s);
-    assert(closed.state == DeliveryState::failed && closed.error == "TDLib account stopped");
+    assert(closed.state == DeliveryState::unknown);
     std::cout << "TgGate TDLib send delivery tracker tests passed\n";
 }

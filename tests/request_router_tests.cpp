@@ -32,7 +32,8 @@ int main() {
     const auto timeout_ticket = router.open(3);
     if (!timeout_ticket) return 1;
     const auto timed_out = router.wait(3, timeout_ticket, std::chrono::steady_clock::now() + 1ms);
-    if (timed_out.response || timed_out.error != "TDLib read request timed out" || router.contains(3) ||
+    if (timed_out.response || timed_out.error != "TDLib request timed out" ||
+        timed_out.completion != tggate::infrastructure::tdlib::RequestCompletion::timed_out || router.contains(3) ||
         router.fulfill(3, 33) || !router.discard_late(3) || router.discard_late(3)) return 1;
 
     const auto stopping_ticket = router.open(4);
@@ -40,7 +41,8 @@ int main() {
     std::atomic_bool stopped = false;
     std::thread stopping_waiter([&] {
         const auto result = router.wait(4, stopping_ticket, std::chrono::steady_clock::now() + 1s);
-        stopped = !result.response && result.error == "TDLib account is stopping";
+        stopped = !result.response && result.error == "TDLib account is stopping" &&
+            result.completion == tggate::infrastructure::tdlib::RequestCompletion::closed;
     });
     router.close("TDLib account is stopping");
     stopping_waiter.join();
@@ -49,5 +51,8 @@ int main() {
     const auto reopened_ticket = router.open(5);
     if (!reopened_ticket || !router.fulfill(5, 55)) return 1;
     const auto reopened = router.wait(5, reopened_ticket, std::chrono::steady_clock::now() + 1s);
-    return reopened.response && *reopened.response == 55 ? 0 : 1;
+    return reopened.response && *reopened.response == 55 &&
+                   reopened.completion == tggate::infrastructure::tdlib::RequestCompletion::response
+               ? 0
+               : 1;
 }

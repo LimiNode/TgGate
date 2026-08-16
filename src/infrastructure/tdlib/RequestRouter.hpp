@@ -15,6 +15,8 @@
 
 namespace tggate::infrastructure::tdlib {
 
+enum class RequestCompletion { unavailable, response, timed_out, closed };
+
 // Correlates asynchronous TDLib responses with synchronous adapter calls. It
 // is independent of TDLib so lifecycle and timeout behaviour can be tested
 // deterministically without a Telegram account or network access.
@@ -26,6 +28,7 @@ public:
         std::condition_variable completed;
         std::optional<Response> response;
         std::string error;
+        RequestCompletion completion = RequestCompletion::unavailable;
         bool ready = false;
     };
 
@@ -34,6 +37,7 @@ public:
     struct Result final {
         std::optional<Response> response;
         std::string error;
+        RequestCompletion completion = RequestCompletion::unavailable;
     };
 
     [[nodiscard]] Ticket open(const std::uint64_t request_id) {
@@ -65,6 +69,7 @@ public:
         {
             std::scoped_lock lock(state->mutex);
             state->response = std::move(response);
+            state->completion = RequestCompletion::response;
             state->ready = true;
         }
         state->completed.notify_one();
@@ -86,9 +91,9 @@ public:
                 requests_.erase(found);
                 retire(request_id);
             }
-            return {.error = "TDLib read request timed out"};
+            return {.error = "TDLib request timed out", .completion = RequestCompletion::timed_out};
         }
-        return {.response = std::move(state->response), .error = std::move(state->error)};
+        return {.response = std::move(state->response), .error = std::move(state->error), .completion = state->completion};
     }
 
     void close(std::string error) {
@@ -107,6 +112,7 @@ public:
             {
                 std::scoped_lock lock(state->mutex);
                 state->error = error;
+                state->completion = RequestCompletion::closed;
                 state->ready = true;
             }
             state->completed.notify_one();

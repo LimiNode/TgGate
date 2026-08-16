@@ -100,8 +100,8 @@ and text-message history through the TDLib adapter. Telegram text sends are
 available only through the single-use, expiring `prepare -> local approve ->
 execute` workflow, which re-checks current policy before TDLib receives a send
 request. A successful execution is reported only after TDLib's terminal send
-success update; a timeout is reported as `delivery_unknown` and is never
-automatically retried.
+success update; any timeout or TDLib shutdown after the request hand-off is
+reported as `delivery_unknown` and is never automatically retried.
 
 See [docs/architecture.md](docs/architecture.md) and
 [docs/dependencies.md](docs/dependencies.md). A real-account validation is

@@ -61,6 +61,8 @@ class TdAccount::ReadResult final {
 public:
     td::td_api::object_ptr<td::td_api::Object> response;
     std::string error;
+    RequestCompletion completion = RequestCompletion::unavailable;
+    bool dispatched = false;
 };
 
 TdAccount::TdAccount() : read_requests_(std::make_unique<ReadRequestRouter>()) {}
@@ -199,6 +201,11 @@ application::Result<application::SendMessageResult> TdAccount::send_message(
     auto request = make_object<td::td_api::sendMessage>(chat_id, nullptr, nullptr, nullptr, nullptr, std::move(content));
     ReadResult response;
     if (!request_tdlib(request.release(), response, std::chrono::steady_clock::now() + kReadRequestTimeout)) {
+        if (classify_initial_send_failure(response.dispatched, response.completion) == DeliveryState::unknown) {
+            return application::SendMessageResult{
+                .message = std::nullopt,
+                .delivery_status = application::MessageDeliveryStatus::delivery_unknown};
+        }
         return std::move(response.error);
     }
     if (!response.response || response.response->get_id() != td::td_api::message::ID) {
@@ -211,11 +218,11 @@ application::Result<application::SendMessageResult> TdAccount::send_message(
     if (delivery.state == DeliveryState::failed) return delivery.error;
     if (delivery.state == DeliveryState::unknown) {
         return application::SendMessageResult{
-            .message = {.id = message.id_, .chat_id = message.chat_id_},
+            .message = application::Message{.id = message.id_, .chat_id = message.chat_id_},
             .delivery_status = application::MessageDeliveryStatus::delivery_unknown};
     }
     return application::SendMessageResult{
-        .message = {.id = delivery.message_id, .chat_id = delivery.chat_id},
+        .message = application::Message{.id = delivery.message_id, .chat_id = delivery.chat_id},
         .delivery_status = application::MessageDeliveryStatus::sent};
 }
 
@@ -229,7 +236,7 @@ void TdAccount::stop() {
         }
     }
     fail_read_requests("TDLib account stopped");
-    delivery_updates_.close("TDLib account stopped");
+    delivery_updates_.close();
     if (receive_thread_.joinable()) receive_thread_.join();
     {
         std::scoped_lock lock(mutex_);
@@ -295,7 +302,7 @@ void TdAccount::receive_loop() {
             // directly and leave manager ownership for the later stop().
             clear_sensitive_options();
             fail_read_requests("TDLib authorization was closed");
-            delivery_updates_.close("TDLib authorization was closed");
+            delivery_updates_.close();
             {
                 std::scoped_lock lock(mutex_);
                 stopping_ = true;
@@ -365,8 +372,10 @@ bool TdAccount::request_tdlib(
             return false;
         }
         manager_->send(client_id_, request_id, std::move(request));
+        result.dispatched = true;
     }
     auto response = read_requests_->router.wait(request_id, ticket, deadline);
+    result.completion = response.completion;
     result.error = std::move(response.error);
     if (!result.error.empty()) return false;
     if (!response.response) {

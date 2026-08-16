@@ -22,6 +22,7 @@ namespace {
 class FakeTelegramService final : public tggate::application::ITelegramService {
 public:
     std::size_t sent_message_count = 0;
+    bool next_send_is_unknown_without_message = false;
     [[nodiscard]] tggate::application::Result<std::vector<tggate::application::Chat>> list_chats(std::string_view) override {
         return std::vector<tggate::application::Chat>{{.id = 42, .title = "Development"}, {.id = 100, .title = "Private"}};
     }
@@ -32,8 +33,14 @@ public:
     [[nodiscard]] tggate::application::Result<tggate::application::SendMessageResult> send_message(
         std::string_view, std::int64_t chat_id, std::string_view text) override {
         ++sent_message_count;
+        if (next_send_is_unknown_without_message) {
+            next_send_is_unknown_without_message = false;
+            return tggate::application::SendMessageResult{
+                .message = std::nullopt,
+                .delivery_status = tggate::application::MessageDeliveryStatus::delivery_unknown};
+        }
         return tggate::application::SendMessageResult{
-            .message = {.id = 7, .chat_id = chat_id, .text = std::string(text)},
+            .message = tggate::application::Message{.id = 7, .chat_id = chat_id, .text = std::string(text)},
             .delivery_status = tggate::application::MessageDeliveryStatus::sent};
     }
 };
@@ -91,13 +98,22 @@ int main() {
     assert(!service.execute_approved_action(client, action_id).at("ok"));
     assert(telegram.sent_message_count == 1);
 
+    telegram.next_send_is_unknown_without_message = true;
+    const auto unknown_prepared = service.prepare_send_message(client, "work", 42, "unknown");
+    const auto unknown_action_id = unknown_prepared.at("action_id").get<std::string>();
+    assert(approvals.approve(unknown_action_id));
+    const auto unknown = service.execute_approved_action(client, unknown_action_id);
+    assert(!unknown.at("ok") && unknown.at("status") == "delivery_unknown" &&
+        unknown.at("chat_id") == 42 && !unknown.contains("message_id"));
+    assert(telegram.sent_message_count == 2);
+
     const auto expires_after_approval = approvals.prepare(client.id, {
         .tool_name = "telegram_prepare_send_message", .account_id = "work", .chat_id = 42, .is_write = true},
         {{"text", "expires after approval"}}, 1s);
     assert(approvals.approve(expires_after_approval.id));
     now += 2s;
     assert(!service.execute_approved_action(client, expires_after_approval.id).at("ok"));
-    assert(telegram.sent_message_count == 1);
+    assert(telegram.sent_message_count == 2);
 
     const domain::policy::ToolInvocation write_invocation{
         .tool_name = "telegram_prepare_send_message", .account_id = "work", .chat_id = 42, .is_write = true};
@@ -115,7 +131,7 @@ int main() {
     assert(approvals.approve(locked_down_id));
     approvals.lockdown();
     assert(!service.execute_approved_action(client, locked_down_id).at("ok"));
-    assert(telegram.sent_message_count == 1);
+    assert(telegram.sent_message_count == 2);
 
     mcp::core::ToolRegistry tools;
     tools.add({"telegram_get_messages", "Read an allowlisted chat", mcp::core::ToolSurface::read, {
