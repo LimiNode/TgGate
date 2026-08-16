@@ -2,6 +2,7 @@
 
 #include "application/security/SecretBuffer.hpp"
 #include "application/TelegramPort.hpp"
+#include "infrastructure/tdlib/SendDeliveryTracker.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -44,7 +45,7 @@ public:
     [[nodiscard]] application::Result<std::vector<application::Chat>> list_chats();
     [[nodiscard]] application::Result<std::vector<application::Message>> get_messages(
         std::int64_t chat_id, std::size_t limit);
-    [[nodiscard]] application::Result<application::Message> send_message(
+    [[nodiscard]] application::Result<application::SendMessageResult> send_message(
         std::int64_t chat_id, std::string_view text);
     void stop();
 
@@ -66,6 +67,7 @@ private:
     [[nodiscard]] bool has_read_request(std::uint64_t request_id) const;
     void fulfill_read_request(std::uint64_t request_id, void* response);
     void fail_read_requests(std::string error);
+    void process_send_update(void* update);
     void set_status(std::string value);
     void set_error(std::string value);
 
@@ -76,6 +78,7 @@ private:
     std::uint64_t next_request_id_ = 1;
     std::uint64_t authorization_input_request_id_ = 0;
     std::unique_ptr<ReadRequestRouter> read_requests_;
+    SendDeliveryTracker delivery_updates_;
     TdAccountOptions options_;
     mutable std::mutex mutex_;
     std::string authorization_status_ = "Stopped";

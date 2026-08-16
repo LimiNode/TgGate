@@ -10,6 +10,7 @@
 #include "domain/telegram/AuthorizationStateMachine.hpp"
 #include "mcp/core/ToolRegistry.hpp"
 #include "mcp/v2025_11_25/ProtocolHandler.hpp"
+#include "mcp/v2026_07_28/ProtocolHandler.hpp"
 
 #include <cassert>
 #include <chrono>
@@ -28,10 +29,12 @@ public:
         std::string_view, std::int64_t chat_id, std::size_t) override {
         return std::vector<tggate::application::Message>{{.id = 1, .chat_id = chat_id, .text = "External text"}};
     }
-    [[nodiscard]] tggate::application::Result<tggate::application::Message> send_message(
+    [[nodiscard]] tggate::application::Result<tggate::application::SendMessageResult> send_message(
         std::string_view, std::int64_t chat_id, std::string_view text) override {
         ++sent_message_count;
-        return tggate::application::Message{.id = 7, .chat_id = chat_id, .text = std::string(text)};
+        return tggate::application::SendMessageResult{
+            .message = {.id = 7, .chat_id = chat_id, .text = std::string(text)},
+            .delivery_status = tggate::application::MessageDeliveryStatus::sent};
     }
 };
 
@@ -71,7 +74,8 @@ int main() {
     assert(authorization.begin_input(generation, domain::telegram::AuthorizationInput::password, authorization_error));
 
     FakeTelegramService telegram;
-    domain::approval::ApprovalService approvals;
+    auto now = std::chrono::system_clock::now();
+    domain::approval::ApprovalService approvals([&now] { return now; });
     application::AuditService audit;
     application::TelegramApplicationService service(telegram, policy, approvals, audit);
 
@@ -85,6 +89,14 @@ int main() {
     assert(approvals.approve(action_id).has_value());
     assert(service.execute_approved_action(client, action_id).at("ok"));
     assert(!service.execute_approved_action(client, action_id).at("ok"));
+    assert(telegram.sent_message_count == 1);
+
+    const auto expires_after_approval = approvals.prepare(client.id, {
+        .tool_name = "telegram_prepare_send_message", .account_id = "work", .chat_id = 42, .is_write = true},
+        {{"text", "expires after approval"}}, 1s);
+    assert(approvals.approve(expires_after_approval.id));
+    now += 2s;
+    assert(!service.execute_approved_action(client, expires_after_approval.id).at("ok"));
     assert(telegram.sent_message_count == 1);
 
     const domain::policy::ToolInvocation write_invocation{
@@ -106,14 +118,54 @@ int main() {
     assert(telegram.sent_message_count == 1);
 
     mcp::core::ToolRegistry tools;
-    tools.add({"telegram_get_messages", "Read an allowlisted chat", mcp::core::ToolSurface::read, nlohmann::json::object()});
-    tools.add({"telegram_prepare_send_message", "Prepare a message", mcp::core::ToolSurface::write, nlohmann::json::object()});
+    tools.add({"telegram_get_messages", "Read an allowlisted chat", mcp::core::ToolSurface::read, {
+        {"type", "object"}, {"properties", {{"account_id", {{"type", "string"}}}, {"chat_id", {{"type", "integer"}}},
+            {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 100}}}}},
+        {"required", {"account_id", "chat_id"}}, {"additionalProperties", false}}});
+    tools.add({"telegram_prepare_send_message", "Prepare a message", mcp::core::ToolSurface::write, {
+        {"type", "object"}, {"properties", {{"account_id", {{"type", "string"}}}, {"chat_id", {{"type", "integer"}}},
+            {"text", {{"type", "string"}, {"minLength", 1}, {"maxLength", 4096}}}}},
+        {"required", {"account_id", "chat_id", "text"}}, {"additionalProperties", false}}});
     mcp::v2025_11_25::ProtocolHandler read_handler(tools, service, client, mcp::core::ToolSurface::read);
+    mcp::v2025_11_25::ProtocolHandler write_handler(tools, service, client, mcp::core::ToolSurface::write);
+    mcp::v2026_07_28::ProtocolHandler current_handler(tools, service, client);
     const auto hidden_write_tool = read_handler.handle({
         {"jsonrpc", "2.0"}, {"id", 1}, {"method", "tools/call"},
         {"params", {{"name", "telegram_prepare_send_message"}, {"arguments", nlohmann::json::object()}}},
     });
     assert(hidden_write_tool.contains("error"));
+
+    const auto is_invalid_arguments = [](const nlohmann::json& response) {
+        return response.contains("error") && response.at("error").at("code") == -32602;
+    };
+    const auto verify_read_schema = [&](auto& handler) {
+        for (const auto& arguments : std::vector<nlohmann::json>{
+                 {{"account_id", "work"}, {"chat_id", 42}, {"limit", 0}},
+                 {{"account_id", "work"}, {"chat_id", 42}, {"limit", 101}},
+                 {{"account_id", "work"}, {"chat_id", "42"}},
+                 {{"account_id", "work"}, {"chat_id", 42}, {"extra", true}},
+                 {{"account_id", "work"}},
+             }) {
+            assert(is_invalid_arguments(handler.handle({{"jsonrpc", "2.0"}, {"id", 2}, {"method", "tools/call"},
+                {"params", {{"name", "telegram_get_messages"}, {"arguments", arguments}}}})));
+        }
+    };
+    const auto verify_write_schema = [&](auto& handler) {
+        for (const auto& arguments : std::vector<nlohmann::json>{
+                 {{"account_id", "work"}, {"chat_id", 42}, {"text", ""}},
+                 {{"account_id", "work"}, {"chat_id", 42}, {"text", std::string(4097, 'x')}},
+                 {{"account_id", "work"}, {"chat_id", 42}, {"text", 5}},
+                 {{"account_id", "work"}, {"chat_id", 42}, {"text", "ok"}, {"extra", true}},
+                 {{"account_id", "work"}, {"chat_id", 42}},
+             }) {
+            assert(is_invalid_arguments(handler.handle({{"jsonrpc", "2.0"}, {"id", 3}, {"method", "tools/call"},
+                {"params", {{"name", "telegram_prepare_send_message"}, {"arguments", arguments}}}})));
+        }
+    };
+    verify_read_schema(read_handler);
+    verify_read_schema(current_handler);
+    verify_write_schema(write_handler);
+    verify_write_schema(current_handler);
     assert(!audit.entries().empty());
 
     std::vector<domain::policy::McpClientProfile> parsed_profiles;

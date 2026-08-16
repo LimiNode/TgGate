@@ -18,6 +18,13 @@ struct Message {
     std::string text;
 };
 
+enum class MessageDeliveryStatus { sent, delivery_unknown };
+
+struct SendMessageResult {
+    Message message;
+    MessageDeliveryStatus delivery_status = MessageDeliveryStatus::delivery_unknown;
+};
+
 template <typename Value>
 class Result final {
 public:
@@ -45,7 +52,7 @@ public:
         std::string_view account_id,
         std::int64_t chat_id,
         std::size_t limit) = 0;
-    [[nodiscard]] virtual Result<Message> send_message(
+    [[nodiscard]] virtual Result<SendMessageResult> send_message(
         std::string_view account_id,
         std::int64_t chat_id,
         std::string_view text) = 0;
@@ -55,7 +62,7 @@ class UnavailableTelegramService final : public ITelegramService {
 public:
     [[nodiscard]] Result<std::vector<Chat>> list_chats(std::string_view) override;
     [[nodiscard]] Result<std::vector<Message>> get_messages(std::string_view, std::int64_t, std::size_t) override;
-    [[nodiscard]] Result<Message> send_message(std::string_view, std::int64_t, std::string_view) override;
+    [[nodiscard]] Result<SendMessageResult> send_message(std::string_view, std::int64_t, std::string_view) override;
 };
 
 } // namespace tggate::application

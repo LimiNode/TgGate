@@ -1,4 +1,4 @@
-# Manual acceptance: TDLib read-only and approved write
+# Manual acceptance: TDLib reads and approved sends
 
 This checklist exercises a real Telegram account without placing its phone
 number, SMS code, 2FA password, API hash, bearer token, or message text in a
@@ -40,11 +40,17 @@ Use the configured MCP client to call:
    message has appeared.
 2. Approve the displayed action in the desktop Pending Actions page before its
    expiry. Call `telegram_execute_approved_action` using the action id. Confirm
-   exactly one message is delivered.
+   the result has `ok: true` and `status: "sent"`, then confirm exactly one
+   message appears in the test chat.
 3. Call execute again with the same id. It must fail and send no second
    message.
 4. Prepare a second action, enable Lockdown in the desktop UI, then attempt to
    execute it. It must fail and send no message.
+
+If execution returns `status: "delivery_unknown"`, do not prepare or execute a
+retry automatically: the approved action has already been consumed and Telegram
+may still accept the original message. Reconcile the outcome manually in the
+test chat before deciding whether a new, separately approved action is needed.
 
 Inspect audit output only for metadata: it must contain neither message text
 nor credentials. Remove the test message manually when finished. Finally stop

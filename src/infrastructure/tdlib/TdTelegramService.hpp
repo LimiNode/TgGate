@@ -22,7 +22,7 @@ public:
         std::string_view account_id) override;
     [[nodiscard]] application::Result<std::vector<application::Message>> get_messages(
         std::string_view account_id, std::int64_t chat_id, std::size_t limit) override;
-    [[nodiscard]] application::Result<application::Message> send_message(
+    [[nodiscard]] application::Result<application::SendMessageResult> send_message(
         std::string_view account_id, std::int64_t chat_id, std::string_view text) override;
 
 private:

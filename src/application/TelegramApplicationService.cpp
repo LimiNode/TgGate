@@ -33,7 +33,7 @@ Result<std::vector<Message>> UnavailableTelegramService::get_messages(std::strin
     return std::string("TDLib account is not configured");
 }
 
-Result<Message> UnavailableTelegramService::send_message(std::string_view, std::int64_t, std::string_view) {
+Result<SendMessageResult> UnavailableTelegramService::send_message(std::string_view, std::int64_t, std::string_view) {
     return std::string("TDLib account is not configured");
 }
 
@@ -158,8 +158,14 @@ nlohmann::json TelegramApplicationService::execute_approved_action(
         audit(profile, action->invocation, domain::policy::PolicyEffect::allow, "error", action->id);
         return error(response.error());
     }
-    audit(profile, action->invocation, domain::policy::PolicyEffect::allow, "ok", action->id);
-    return {{"ok", true}, {"message_id", response->id}, {"chat_id", response->chat_id}};
+    if (response->delivery_status == MessageDeliveryStatus::delivery_unknown) {
+        audit(profile, action->invocation, domain::policy::PolicyEffect::allow, "delivery_unknown", action->id);
+        return {{"ok", false}, {"status", "delivery_unknown"},
+            {"message_id", response->message.id}, {"chat_id", response->message.chat_id}};
+    }
+    audit(profile, action->invocation, domain::policy::PolicyEffect::allow, "sent", action->id);
+    return {{"ok", true}, {"status", "sent"},
+        {"message_id", response->message.id}, {"chat_id", response->message.chat_id}};
 }
 
 } // namespace tggate::application
