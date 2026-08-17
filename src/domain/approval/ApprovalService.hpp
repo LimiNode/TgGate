@@ -3,6 +3,7 @@
 #include "domain/policy/Policy.hpp"
 
 #include <chrono>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -26,6 +27,11 @@ struct PendingAction {
 
 class ApprovalService final {
 public:
+    using Clock = std::function<std::chrono::system_clock::time_point()>;
+
+    ApprovalService();
+    explicit ApprovalService(Clock clock);
+
     [[nodiscard]] PendingAction prepare(
         std::string client_id,
         policy::ToolInvocation invocation,
@@ -43,11 +49,14 @@ public:
 
 private:
     [[nodiscard]] static std::string create_secure_id();
-    [[nodiscard]] static bool is_expired(const PendingAction& action);
+    [[nodiscard]] bool is_expired(const PendingAction& action) const;
     [[nodiscard]] std::optional<PendingAction> find_and_expire_locked(std::string_view action_id);
+    static void wipe_arguments(nlohmann::json& arguments);
+    static void finish_action(PendingAction& action, ActionStatus status);
 
     mutable std::mutex mutex_;
     std::unordered_map<std::string, PendingAction> actions_;
+    Clock clock_;
 };
 
 } // namespace tggate::domain::approval

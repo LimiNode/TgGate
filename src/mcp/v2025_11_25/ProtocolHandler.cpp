@@ -1,4 +1,5 @@
 #include "mcp/v2025_11_25/ProtocolHandler.hpp"
+#include "mcp/core/InputSchemaValidator.hpp"
 
 namespace tggate::mcp::v2025_11_25 {
 namespace {
@@ -52,11 +53,15 @@ nlohmann::json ProtocolHandler::handle_tool_call(const nlohmann::json& request) 
         return rpc_error(id, -32602, "tools/call requires a string name");
     }
     const auto name = params.at("name").get<std::string>();
-    if (!tools_.find(name, surface_)) {
+    const auto tool = tools_.find(name, surface_);
+    if (!tool) {
         // A read endpoint must not reveal write tools, and vice versa.
         return rpc_error(id, -32602, "Tool is unavailable on this endpoint");
     }
     const auto& arguments = params.value("arguments", nlohmann::json::object());
+    if (const auto validation_error = core::validate_tool_arguments(tool->input_schema, arguments)) {
+        return rpc_error(id, -32602, *validation_error);
+    }
     nlohmann::json response;
     try {
         if (name == "telegram_list_chats") {

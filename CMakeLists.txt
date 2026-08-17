@@ -52,6 +52,7 @@ if(WIN32)
 endif()
 
 add_library(tggate_mcp STATIC
+    src/mcp/core/InputSchemaValidator.cpp
     src/mcp/core/ToolRegistry.cpp
     src/mcp/v2025_11_25/ProtocolHandler.cpp
     src/mcp/v2026_07_28/ProtocolHandler.cpp)
@@ -204,6 +205,7 @@ if(TGGATE_ENABLE_TDLIB)
     tggate_require_external("external/tdlib")
     tggate_require_external("external/openssl")
     add_library(tggate_tdlib STATIC
+        src/infrastructure/tdlib/SendDeliveryTracker.cpp
         src/infrastructure/tdlib/TdAccount.cpp
         src/infrastructure/tdlib/TdTelegramService.cpp)
     target_include_directories(tggate_tdlib PUBLIC src)
@@ -246,6 +248,11 @@ if(TGGATE_BUILD_TESTS)
     add_executable(tggate_tdlib_request_router_tests tests/request_router_tests.cpp)
     target_include_directories(tggate_tdlib_request_router_tests PRIVATE src)
     add_test(NAME tggate_tdlib_request_router_tests COMMAND tggate_tdlib_request_router_tests)
+    add_executable(tggate_tdlib_send_delivery_tracker_tests
+        tests/send_delivery_tracker_tests.cpp
+        src/infrastructure/tdlib/SendDeliveryTracker.cpp)
+    target_include_directories(tggate_tdlib_send_delivery_tracker_tests PRIVATE src)
+    add_test(NAME tggate_tdlib_send_delivery_tracker_tests COMMAND tggate_tdlib_send_delivery_tracker_tests)
     add_executable(tggate_secret_buffer_tests tests/secret_buffer_tests.cpp)
     target_include_directories(tggate_secret_buffer_tests PRIVATE src)
     add_test(NAME tggate_secret_buffer_tests COMMAND tggate_secret_buffer_tests)

@@ -17,7 +17,24 @@ namespace {
 
 constexpr auto kHex = "0123456789abcdef";
 
+void wipe_json_strings(nlohmann::json& value) {
+    if (value.is_string()) {
+        auto& string = value.get_ref<nlohmann::json::string_t&>();
+        volatile char* bytes = string.empty() ? nullptr : string.data();
+        for (std::size_t index = 0; bytes && index < string.size(); ++index) bytes[index] = '\0';
+        string.clear();
+        return;
+    }
+    if (value.is_array() || value.is_object()) {
+        for (auto& item : value) wipe_json_strings(item);
+    }
+}
+
 } // namespace
+
+ApprovalService::ApprovalService() : ApprovalService([] { return std::chrono::system_clock::now(); }) {}
+
+ApprovalService::ApprovalService(Clock clock) : clock_(std::move(clock)) {}
 
 std::string ApprovalService::create_secure_id() {
     std::array<unsigned char, 32> bytes{};
@@ -42,8 +59,8 @@ std::string ApprovalService::create_secure_id() {
     return result;
 }
 
-bool ApprovalService::is_expired(const PendingAction& action) {
-    return std::chrono::system_clock::now() >= action.expires_at;
+bool ApprovalService::is_expired(const PendingAction& action) const {
+    return clock_() >= action.expires_at;
 }
 
 PendingAction ApprovalService::prepare(
@@ -51,7 +68,7 @@ PendingAction ApprovalService::prepare(
     policy::ToolInvocation invocation,
     nlohmann::json arguments,
     const std::chrono::seconds lifetime) {
-    const auto now = std::chrono::system_clock::now();
+    const auto now = clock_();
     PendingAction action{
         .id = create_secure_id(),
         .client_id = std::move(client_id),
@@ -71,8 +88,9 @@ std::optional<PendingAction> ApprovalService::find_and_expire_locked(const std::
     if (iterator == actions_.end()) {
         return std::nullopt;
     }
-    if (iterator->second.status == ActionStatus::pending && is_expired(iterator->second)) {
-        iterator->second.status = ActionStatus::expired;
+    if ((iterator->second.status == ActionStatus::pending || iterator->second.status == ActionStatus::approved) &&
+        is_expired(iterator->second)) {
+        finish_action(iterator->second, ActionStatus::expired);
     }
     return iterator->second;
 }
@@ -93,7 +111,7 @@ std::optional<PendingAction> ApprovalService::deny(const std::string_view action
     if (!action || action->status != ActionStatus::pending) {
         return std::nullopt;
     }
-    actions_.at(action->id).status = ActionStatus::denied;
+    finish_action(actions_.at(action->id), ActionStatus::denied);
     return actions_.at(action->id);
 }
 
@@ -109,12 +127,14 @@ std::optional<PendingAction> ApprovalService::take_approved_for_execution(
 
     const auto decision = policy_engine.evaluate(current_profile, action->invocation);
     if (decision.effect == policy::PolicyEffect::deny) {
-        actions_.at(action->id).status = ActionStatus::denied;
+        finish_action(actions_.at(action->id), ActionStatus::denied);
         return std::nullopt;
     }
 
-    actions_.at(action->id).status = ActionStatus::executed;
-    return actions_.at(action->id);
+    auto& stored_action = actions_.at(action->id);
+    auto execution = stored_action;
+    finish_action(stored_action, ActionStatus::executed);
+    return execution;
 }
 
 std::vector<PendingAction> ApprovalService::pending_actions() const {
@@ -132,9 +152,19 @@ void ApprovalService::lockdown() {
     std::scoped_lock lock(mutex_);
     for (auto& [id, action] : actions_) {
         if (action.status == ActionStatus::pending || action.status == ActionStatus::approved) {
-            action.status = ActionStatus::denied;
+            finish_action(action, ActionStatus::denied);
         }
     }
+}
+
+void ApprovalService::wipe_arguments(nlohmann::json& arguments) {
+    wipe_json_strings(arguments);
+    arguments = nlohmann::json::object();
+}
+
+void ApprovalService::finish_action(PendingAction& action, const ActionStatus status) {
+    action.status = status;
+    wipe_arguments(action.arguments);
 }
 
 } // namespace tggate::domain::approval

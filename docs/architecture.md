@@ -73,9 +73,15 @@ passed to `setTdlibParameters`; it is never persisted as plaintext.
 is the only bridge used by application services. Its read calls synchronously
 await the matching TDLib response with a bounded timeout; receive-thread
 authorization updates and regular request responses remain serialized inside
-`TdAccount`. Current support is intentionally read-only: chats and text
-messages. The write port remains unavailable until its approval-preserving
-TDLib implementation is added.
+`TdAccount`. It supports chat and text-message reads plus sending text only
+through the application-level `prepare -> approve -> execute` flow. `TdAccount`
+does not expose an unaudited direct MCP write path. A returned TDLib temporary
+message is not treated as send success: its temporary id is correlated with
+`updateMessageSendSucceeded` or `updateMessageSendFailed`. A bounded wait that
+does not observe either terminal update returns `delivery_unknown`. The same
+result applies if the initial `sendMessage` response times out or TDLib closes
+after the request has been handed off. In every unknown case TgGate consumes the
+approval and never retries automatically.
 
 `v2026_07_28` is the implemented protocol adapter. Future revisions must be
 independent handlers rather than scattered version checks.

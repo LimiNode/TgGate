@@ -1,4 +1,5 @@
 #include "mcp/v2026_07_28/ProtocolHandler.hpp"
+#include "mcp/core/InputSchemaValidator.hpp"
 
 namespace tggate::mcp::v2026_07_28 {
 
@@ -63,6 +64,9 @@ nlohmann::json ProtocolHandler::handle_tool_call(const nlohmann::json& request) 
         return rpc_error(id, -32602, "Tool is unavailable for this client");
     }
     const auto& arguments = params.value("arguments", nlohmann::json::object());
+    if (const auto validation_error = core::validate_tool_arguments(tool->input_schema, arguments)) {
+        return rpc_error(id, -32602, *validation_error);
+    }
     nlohmann::json response;
     try {
         if (name == "telegram_list_chats") {

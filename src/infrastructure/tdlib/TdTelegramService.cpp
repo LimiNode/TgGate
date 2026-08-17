@@ -33,9 +33,11 @@ application::Result<std::vector<application::Message>> TdTelegramService::get_me
     return account->get_messages(chat_id, limit);
 }
 
-application::Result<application::Message> TdTelegramService::send_message(
-    std::string_view, std::int64_t, std::string_view) {
-    return std::string("Telegram write operations are not implemented yet");
+application::Result<application::SendMessageResult> TdTelegramService::send_message(
+    const std::string_view account_id, const std::int64_t chat_id, const std::string_view text) {
+    const auto account = find(account_id);
+    if (!account) return std::string("Telegram account is not running");
+    return account->send_message(chat_id, text);
 }
 
 } // namespace tggate::infrastructure::tdlib
